@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.egg-info/
+
+# Тесты и покрытие
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# Сборка
+build/
+dist/
+
+# Логи и локальные данные
+logs/
+*.log
+data/
+*.gguf
+shared/.vault_key
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Граф кода graphify (пересобирается: graphify update .)
+graphify-out/
