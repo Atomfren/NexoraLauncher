@@ -1,0 +1,31 @@
+[project]
+name = "nexoralauncher"
+version = "1.4.0"
+description = "NexoraLauncher — Minecraft launcher (FastAPI backend + PyQt6 GUI)"
+readme = "README.md"
+license = { text = "GPL-3.0-or-later" }
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = [".venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N"]
+ignore = [
+    "B008",   # Query()/Depends() в аргументах FastAPI — штатный приём
+    "N802",   # имена методов Qt (showEvent и т.п.)
+    "UP007",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501", "E101", "W191"]  # логи Fabric/Forge с табуляциями — как в реальности
+"shared/i18n.py" = ["E501"]
+"frontend/theme.py" = ["E501"]
+"frontend/quick/icons.py" = ["E501"]  # SVG-данные иконок
+"frontend/quick/*" = ["N815"]  # сигналы и свойства для QML — в camelCase, как принято в Qt
+
+[tool.coverage.run]
+source = ["backend", "shared"]
+omit = ["backend/services/ai_assistant.py"]
