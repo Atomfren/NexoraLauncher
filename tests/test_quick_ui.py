@@ -139,6 +139,7 @@ def test_verdict_and_rows(tmp_path):
         (shots / name).write_bytes(b"x")
     assert {s["name"] for s in list_screenshots(str(tmp_path))} == {"a", "b"}
     assert list_screenshots(str(tmp_path / "missing")) == []
+    assert list_screenshots("") == []  # не папка screenshots текущего каталога
 
 
 # --- Окно целиком ------------------------------------------------------------------------------
@@ -180,6 +181,45 @@ def test_quick_window_loads_and_plays(qt_app, fake_minecraft, monkeypatch):
         assert build.mods[0]["name"] == "hud-1.0" and build.worlds[0]["name"] == "Мир"
         assert lib.current["state"] == "none"
 
+        # Мир: экспорт в .zip и импорт обратно (под новым именем)
+        import tempfile
+        from pathlib import Path
+
+        from PyQt6.QtCore import QUrl
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "world-copy"
+            build.exportWorld("Мир", QUrl.fromLocalFile(str(archive)).toString())
+            assert _pump_until(lambda: archive.with_suffix(".zip").is_file())
+            build.importWorld(QUrl.fromLocalFile(str(archive.with_suffix(".zip"))).toString())
+            assert _pump_until(lambda: sorted(w["name"] for w in build.worlds) == ["Мир", "Мир (2)"])
+
+        # Боковая панель: контент всегда начинается там, где она заканчивается (без наслоения и полосы)
+        from PyQt6.QtQuick import QQuickItem
+        sidebar = ui.window.findChild(QQuickItem, "sidebar")
+        content = ui.window.findChild(QQuickItem, "content")
+        for _ in range(2):
+            ui.shell.toggleSidebar()
+            # Анимация ширины под нагрузкой может идти дольше — ждём конечного состояния
+            assert _pump_until(lambda: sidebar.width() == (220 if ui.shell.sidebarWide else 72), 3)
+            assert content.x() == sidebar.width()
+
+        # Положение панели: справа — контент слева от неё; сверху/снизу — полоса во всю ширину
+        original = ui.shell.sidebarPosition
+        try:
+            ui.shell.setSidebarPosition("right")
+            _pump_until(lambda: False, 0.3)
+            assert content.x() == 0 and sidebar.x() == ui.window.width() - sidebar.width()
+            for side in ("top", "bottom"):
+                ui.shell.setSidebarPosition(side)
+                _pump_until(lambda: False, 0.3)
+                assert sidebar.width() == ui.window.width() and sidebar.height() == 56 and content.x() == 0
+            assert sidebar.y() == ui.window.height() - 56
+            ui.shell.setSidebarPosition("diagonal")  # неизвестное значение игнорируется
+            assert ui.shell.sidebarPosition == "bottom"
+        finally:
+            ui.shell.setSidebarPosition(original)
+        _pump_until(lambda: False, 0.3)
+
         lib.setQuery("oth")
         assert lib.model.count == 1
         lib.setQuery("")
@@ -195,10 +235,15 @@ def test_quick_window_loads_and_plays(qt_app, fake_minecraft, monkeypatch):
         assert _pump_until(lambda: lib.current.get("state") == "ready", 15)
         assert ("vanilla", "1.20.1") in fake_minecraft
 
+        # «Сворачивать лаунчер при запуске игры» (по умолчанию включено): свернулось и вернулось после выхода
+        from PyQt6.QtGui import QWindow
+        assert api.settings()["hide_on_launch"] is True
         lib.play("Smoke")
         assert _pump_until(lambda: lib.current.get("state") == "running", 15)
         assert lib.current["startedAt"] > 0
+        assert _pump_until(lambda: ui.window.visibility() == QWindow.Visibility.Minimized, 5)
         assert _pump_until(lambda: lib.current.get("state") == "ready", 15)
+        assert _pump_until(lambda: ui.window.visibility() != QWindow.Visibility.Minimized, 5)
 
         assert not [w for w in warnings if "qml" in w.lower()], warnings
         assert not [t for t in toasts if t[1] == "err"], toasts
@@ -229,7 +274,7 @@ def test_wizard_names_and_log_filters():
     from frontend.quick.wizard import name_error
     assert name_error("Survival 1.20", set()) == ""
     assert name_error("  ", set()) == "Введите название"
-    assert name_error("a/b", set()) != "" and name_error("x" * 65, set()) == "Не длиннее 64 символов"
+    assert name_error("Create: Above & Beyond", set()) == "" and name_error("x" * 65, set()) == "Не длиннее 64 символов"
     assert name_error("survival", {"Survival"}) == "Сборка с таким названием уже есть"
 
     rows = [entry_row(e, {"sodium": "Sodium"}) for e in (
@@ -313,6 +358,14 @@ def test_quick_sections_work_end_to_end(qt_app, fake_minecraft, modrinth):
         for tab in ("settings", "mods", "overview"):
             ui.shell.navigate("library", tab)
             _pump_until(lambda: False, 0.2)
+
+        # Название с «:» — папка очищается, в интерфейсе остаётся как введено
+        ui.wizard.create("Create: Above & Beyond", "1.20.1", "vanilla", "")
+        assert _pump_until(lambda: lib.current.get("title") == "Create: Above & Beyond", 15)
+        assert lib.current["name"] == "Create_ Above & Beyond"
+        assert ui.wizard.nameError("create: above & beyond") != ""
+        lib.rename("Create_ Above & Beyond", "Create: A&B")
+        assert _pump_until(lambda: lib.titleOf("Create_ Above & Beyond") == "Create: A&B")
 
         assert not [w for w in warnings if "qml" in w.lower()], warnings
         assert not errors, errors

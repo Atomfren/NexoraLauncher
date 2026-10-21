@@ -154,7 +154,7 @@ class PackManager:
         return instance
 
     @staticmethod
-    def import_mrpack(path: Path, new_name: str = "", task: Task | None = None) -> Instance:
+    def import_mrpack(path: Path, new_name: str = "", task: Task | None = None, title: str = "") -> Instance:
         with _open_zip(path) as zf:
             try:
                 index = json.loads(zf.read("modrinth.index.json"))
@@ -170,8 +170,10 @@ class PackManager:
                 mod_loader, loader_version = loader, deps[key]
                 break
 
-        name = new_name or InstanceManager.unique_name(sanitize_name(index.get("name", path.stem)))
-        instance = InstanceManager.create(name, mc_version, mod_loader, loader_version)
+        pack_title = index.get("name", path.stem)
+        name = new_name or InstanceManager.unique_name(sanitize_name(pack_title))
+        instance = InstanceManager.create(name, mc_version, mod_loader, loader_version,
+                                          title=title or ("" if new_name else pack_title))
         try:
             if task:
                 task.set_status(f"Загрузка файлов модпака «{index.get('name', name)}»…")
@@ -209,7 +211,8 @@ class PackManager:
             task.set_status(f"Загрузка {project.get('title', 'модпака')}…")
         modrinth.download_file(file_info, dest, task)
         try:
-            name = new_name or InstanceManager.unique_name(sanitize_name(project.get("title", "Modpack")))
-            return PackManager.import_mrpack(dest, name, task)
+            pack_title = project.get("title", "Modpack")
+            name = new_name or InstanceManager.unique_name(sanitize_name(pack_title))
+            return PackManager.import_mrpack(dest, name, task, title="" if new_name else pack_title)
         finally:
             dest.unlink(missing_ok=True)

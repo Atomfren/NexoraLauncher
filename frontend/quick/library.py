@@ -30,19 +30,23 @@ from frontend.quick.images import file_ref
 from frontend.services.api_client import ApiClient, ApiError
 from frontend.utils.logger import logger
 from frontend.utils.worker import run_async
+from shared.fsutil import UnsafePathError, validate_name
 from shared.i18n import t
 
 _FAST_POLL_MS = 2000
 _SLOW_POLL_MS = 15000
 _IMAGE_EXT = (".png", ".jpg", ".jpeg")
 
-ROLES = ("name", "version", "loader", "loaderVersion", "optifine", "installed", "state", "progress",
-         "playtime", "lastPlayed", "lastPlayedRaw", "seed", "palette", "cover", "background", "gameDir", "path",
+ROLES = ("name", "title", "version", "loader", "loaderVersion", "optifine", "installed", "state", "progress",
+         "playtime", "lastPlayed", "lastPlayedRaw", "seed", "palette", "cover", "background", "customBackground",
+         "gameDir", "path",
          "startedAt", "pid", "maxMemory", "minMemory", "javaPath", "jvmArgs", "width", "height", "fullscreen")
 
 
 def latest_screenshot(game_dir: str) -> str:
     """Путь к самому свежему скриншоту сборки или пустая строка."""
+    if not game_dir:
+        return ""
     folder = Path(game_dir) / "screenshots"
     try:
         shots = [p for p in folder.iterdir() if p.suffix.lower() in _IMAGE_EXT]
@@ -56,7 +60,8 @@ def build_row(instance: dict, process: dict | None, runtime: dict | None) -> dic
     name = instance["name"]
     seed = art.seed_of(name)
     palette = art.palette_for(name)
-    shot = instance.get("_screenshot", "")
+    # Своё фото важнее последнего скриншота
+    shot = instance.get("background") or instance.get("_screenshot", "")
     if runtime:
         state = runtime["state"]
     elif instance.get("running_pid"):
@@ -67,6 +72,7 @@ def build_row(instance: dict, process: dict | None, runtime: dict | None) -> dic
         state = "ready"
     return {
         "name": name,
+        "title": instance.get("title") or name,
         "version": instance.get("version", ""),
         "loader": instance.get("mod_loader", "vanilla"),
         "loaderVersion": instance.get("loader_version", ""),
@@ -81,6 +87,7 @@ def build_row(instance: dict, process: dict | None, runtime: dict | None) -> dic
         "palette": palette,
         "cover": file_ref(shot) if shot else f"image://nx/scene/{palette}/{seed}/20/20",
         "background": QUrl.fromLocalFile(shot).toString() if shot else "",
+        "customBackground": bool(instance.get("background")),
         "gameDir": instance.get("game_dir", ""),
         "path": instance.get("path", ""),
         "startedAt": float(process["started_at"]) if process else 0.0,
@@ -148,6 +155,8 @@ class Library(QObject):
     loadedChanged = pyqtSignal()
     # Игра закрылась (имя сборки, код выхода или -1, если неизвестен)
     gameExited = pyqtSignal(str, int)
+    # Процесс игры запущен (для «Сворачивать лаунчер при запуске игры»)
+    gameStarted = pyqtSignal(str)
     # Для запуска нужен аккаунт
     accountRequired = pyqtSignal(str)
     # В сборку поставили контент (из каталога, мастера) — вкладкам пора перечитать
@@ -249,15 +258,20 @@ class Library(QObject):
     def _apply(self) -> None:
         q = self._query.lower()
         rows = [build_row(i, self._processes.get(i["name"]), self._runtime.get(i["name"]))
-                for i in self._instances if not q or q in i["name"].lower()]
+                for i in self._instances if not q or q in (i.get("title") or i["name"]).lower()]
         self._model.set_rows(rows)
         self.currentChanged.emit()
 
     @pyqtSlot(result="QVariantList")
     def entries(self) -> list[dict]:
         """Все сборки без фильтра — для палитры команд."""
-        return [{"name": i["name"], "loader": i.get("mod_loader", "vanilla"), "version": i.get("version", "")}
-                for i in self._instances]
+        return [{"name": i["name"], "title": i.get("title") or i["name"], "loader": i.get("mod_loader", "vanilla"),
+                 "version": i.get("version", "")} for i in self._instances]
+
+    @pyqtSlot(str, result=str)
+    def titleOf(self, name: str) -> str:
+        """Отображаемое имя сборки (для серверов и неизвестных имён — само имя)."""
+        return next((i.get("title") or i["name"] for i in self._instances if i["name"] == name), name)
 
     @pyqtSlot(str)
     def setQuery(self, query: str) -> None:
@@ -325,7 +339,8 @@ class Library(QObject):
         port_num = int(port) if port.isdigit() else 25565
 
         def done(_task: dict) -> None:
-            self.shell.toast(t("q.game_started", name=name), "info")
+            self.shell.toast(t("q.game_started", name=self.titleOf(name)), "info")
+            self.gameStarted.emit(name)
 
         self._start_task(name, "launching", lambda: self.api.launch_instance(name, host, port_num), done)
 
@@ -370,9 +385,20 @@ class Library(QObject):
 
     @pyqtSlot(str, str)
     def rename(self, name: str, new_name: str) -> None:
-        new_name = new_name.strip()
-        if new_name and new_name != name:
-            self._mutate(lambda: self.api.rename_instance(name, new_name), t("q.renamed"), new_name)
+        """Переименование: допустимое имя меняет и папку, иначе меняется только отображаемое имя."""
+        new_name = " ".join(new_name.split())
+        if not new_name or new_name == self.titleOf(name):
+            return
+        try:
+            validate_name(new_name)
+        except UnsafePathError:
+            self._mutate(lambda: self.api.update_instance(name, title=new_name), t("q.renamed"), name)
+            return
+        others = {i["name"].lower() for i in self._instances if i["name"] != name}
+        if new_name.lower() in others:
+            self.shell.toast(t("q.name_taken"), "err")
+            return
+        self._mutate(lambda: self.api.rename_instance(name, new_name), t("q.renamed"), new_name)
 
     @pyqtSlot(str)
     def duplicate(self, name: str) -> None:
@@ -381,9 +407,19 @@ class Library(QObject):
         self._mutate(lambda: self.api.duplicate_instance(name, new_name), t("q.duplicated", name=new_name),
                      new_name)
 
+    @pyqtSlot(str, str)
+    def setBackground(self, name: str, url: str) -> None:
+        from frontend.quick.build import local_path
+        path = local_path(url)
+        self._mutate(lambda: self.api.set_background(name, path), t("q.background_set"))
+
+    @pyqtSlot(str)
+    def clearBackground(self, name: str) -> None:
+        self._mutate(lambda: self.api.clear_background(name), t("q.background_cleared"))
+
     @pyqtSlot(str)
     def remove(self, name: str) -> None:
-        self._mutate(lambda: self.api.delete_instance(name), t("q.deleted", name=name))
+        self._mutate(lambda: self.api.delete_instance(name), t("q.deleted", name=self.titleOf(name)))
 
     @pyqtSlot(str, str)
     def export(self, name: str, url: str) -> None:

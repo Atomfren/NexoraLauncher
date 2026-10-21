@@ -334,3 +334,61 @@ def test_unsupported_core_version_and_vanilla(client, wait_task, paper_env, monk
     server = client.get("/api/v1/hosting/servers/Vanilla").json()
     assert server["content_type"] is None and (hosting.servers_dir() / "Vanilla" / "server.jar").exists()
     assert client.post("/api/v1/hosting/servers/Vanilla/mods", json={"project_id": "luckperms"}).status_code == 400
+
+
+def test_quick_own_server_settings_and_mods(client, wait_task, fake_server_env, monkeypatch):
+    """QML «Сеть → свой сервер»: настройки server.properties и список модов с удалением."""
+    pytest.importorskip("PyQt6.QtQuick")
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtWidgets import QApplication
+    from test_quick_ui import _pump_until
+
+    from frontend.backend_runner import EmbeddedBackend
+    from frontend.quick.bridge import Shell
+    from frontend.quick.library import Library
+    from frontend.quick.network import Network, normalize_property, property_rows
+    from frontend.services.api_client import ApiClient
+
+    assert normalize_property("max-players", "5000") == "1000"
+    assert normalize_property("max-players", "abc") is None
+    assert normalize_property("difficulty", "nightmare") is None
+    assert normalize_property("pvp", False) == "false" and normalize_property("server-port", "1") is None
+    rows = {r["key"]: r for r in property_rows({"gamemode": "creative", "pvp": "true"})}
+    assert rows["gamemode"]["options"][1] == {"value": "creative", "label": "Творчество"}
+    assert rows["pvp"]["checked"] and rows["online-mode"]["hint"]
+    assert rows["allow-nether"]["checked"]  # нет в файле — как у Minecraft, включён
+
+    _create(client, wait_task)
+    # Ядро уже скачано: клиенту интерфейса нужен настоящий httpx
+    monkeypatch.setattr(httpx, "Client", httpx._client.Client)
+    app = QApplication.instance() or QApplication(sys.argv)  # noqa: F841 — держим ссылку
+    backend = EmbeddedBackend()
+    backend.start()
+    api = ApiClient(backend.base_url, backend.token)
+    try:
+        # Без окна: второе окно Qt Quick в одном процессе ломает анимации в других тестах
+        shell = Shell(api, False, ("Segoe UI", "Consolas"))
+        network = Network(api, shell, Library(api, shell, ""))
+        errors: list[str] = []
+        shell.toastRequested.connect(lambda text, kind: errors.append(text) if kind == "err" else None)
+        network.activate()
+        assert _pump_until(lambda: network.own.get("name") == "Friends")
+
+        network.loadProps()
+        assert _pump_until(lambda: len(network.props) > 0)
+        network.setProp("max-players", "4")
+        network.setProp("pvp", False)
+        assert _pump_until(lambda: api.server_properties("Friends").get("pvp") == "false")
+        assert api.server_properties("Friends")["max-players"] == "4"
+
+        network.loadMods()
+        assert _pump_until(lambda: not network.modsLoading and len(network.mods) >= 2)
+        assert any(m["tunnel"] for m in network.mods)
+        network.removeMod("fabric-api.jar")
+        assert _pump_until(lambda: all(m["filename"] != "fabric-api.jar" for m in network.mods))
+        network.deactivate()
+        assert not errors, errors
+    finally:
+        api.close()
+        backend.stop()

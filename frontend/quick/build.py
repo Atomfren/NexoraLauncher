@@ -29,6 +29,8 @@ def local_path(value) -> str:
 
 
 def list_screenshots(game_dir: str, limit: int = _MAX_SHOTS) -> list[dict[str, Any]]:
+    if not game_dir:  # пустой путь означал бы папку screenshots в текущем каталоге
+        return []
     folder = Path(game_dir) / "screenshots"
     try:
         files = [p for p in folder.iterdir() if p.suffix.lower() in _IMAGE_EXT]
@@ -203,11 +205,11 @@ class BuildDetails(QObject):
             return
         self._loading = True
         self.changed.emit()
-        game_dir = self.library.current.get("gameDir", "")
 
         def fetch_main():
             worlds = [world_row(w) for w in self.api.worlds(name)]
-            shots = list_screenshots(game_dir)
+            # Папку берём из API: при запуске список сборок может ещё не загрузиться
+            shots = list_screenshots(self.api.instance(name).get("game_dir", ""))
             hosted = self.api.hosted_servers()
             settings = self.api.settings()
             return worlds, shots, hosted, settings
@@ -393,8 +395,15 @@ class BuildDetails(QObject):
     def applyTurbo(self, tune_jvm: bool) -> None:
         name = self._name
 
-        def finished(_task: dict) -> None:
-            self.shell.toast(t("q.turbo_done"))
+        def finished(task: dict) -> None:
+            result = task.get("result") or {}
+            failed, installed = result.get("failed") or [], result.get("installed") or []
+            if failed:
+                self.shell.toast(t("q.turbo_partial", mods=", ".join(failed)), "err")
+            elif installed:
+                self.shell.toast(t("q.turbo_done_mods", n=len(installed)))
+            else:
+                self.shell.toast(t("q.turbo_done"))
             self.library.refresh()
             self.reloadContent()
             self.loadSnapshots()
@@ -469,4 +478,25 @@ class BuildDetails(QObject):
             self.reload()
 
         run_async(lambda: self.api.delete_world(name, world), self._guard(done),
+                  lambda msg: self.shell.toast(msg, "err"), owner=self)
+
+    @pyqtSlot(str, str)
+    def exportWorld(self, world: str, url: str) -> None:
+        """Мир → .zip (например, чтобы отправить другу или перенести в другую сборку)."""
+        name, path = self._name, local_path(url)
+        if not path.lower().endswith(".zip"):
+            path += ".zip"
+        run_async(lambda: self.api.export_world(name, world, path),
+                  lambda r: self.shell.toast(t("q.world_exported", path=(r or {}).get("path", path))),
+                  lambda msg: self.shell.toast(msg, "err"), owner=self)
+
+    @pyqtSlot(str)
+    def importWorld(self, url: str) -> None:
+        name = self._name
+
+        def done(result: dict) -> None:
+            self.shell.toast(t("q.world_imported", name=(result or {}).get("name", "")))
+            self.reload()
+
+        run_async(lambda: self.api.import_world(name, local_path(url)), self._guard(done),
                   lambda msg: self.shell.toast(msg, "err"), owner=self)

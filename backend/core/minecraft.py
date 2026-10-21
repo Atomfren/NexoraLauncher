@@ -14,8 +14,8 @@ from backend.core.errors import BadRequestError, ExternalServiceError, NotFoundE
 from backend.core.instance import Instance
 from backend.core.tasks import Task
 from shared.config import AppConfig
-from shared.fsutil import read_json
-from shared.paths import get_minecraft_dir
+from shared.fsutil import atomic_write_json, read_json
+from shared.paths import get_cache_dir, get_minecraft_dir
 from shared.version import APP_NAME, APP_VERSION
 
 _VERSIONS_TTL = 600
@@ -60,11 +60,21 @@ class MinecraftManager:
         cache = MinecraftManager._versions_cache
         if cache and not force and time.time() - cache[0] < _VERSIONS_TTL:
             return cache[1]
+        disk = get_cache_dir() / "mojang-versions.json"
+        saved = read_json(disk)
+        saved_ok = isinstance(saved, dict) and isinstance(saved.get("versions"), list) and saved["versions"]
+        if saved_ok and not force and time.time() - float(saved.get("time", 0)) < _VERSIONS_TTL:
+            MinecraftManager._versions_cache = (float(saved["time"]), saved["versions"])
+            return saved["versions"]
         try:
             raw = mll.utils.get_version_list()
         except Exception as e:  # noqa: BLE001 — сетевые ошибки requests/json
             if cache:
                 return cache[1]
+            if saved_ok:
+                # Нет сети — показываем последний сохранённый список
+                logger.warning(f"Список версий Mojang недоступен, используется сохранённый: {e}")
+                return saved["versions"]
             raise ExternalServiceError(f"Не удалось получить список версий Mojang: {e}") from e
         versions = [
             {
@@ -75,6 +85,10 @@ class MinecraftManager:
             for v in raw
         ]
         MinecraftManager._versions_cache = (time.time(), versions)
+        try:
+            atomic_write_json(disk, {"time": time.time(), "versions": versions})
+        except OSError as e:
+            logger.debug(f"Не удалось сохранить список версий: {e}")
         return versions
 
     def latest_release(self) -> str:
@@ -224,6 +238,34 @@ class MinecraftManager:
         return launch_id
 
     # --- Запуск -------------------------------------------------------------------
+    @staticmethod
+    def wants_fullscreen(instance: Instance, config: AppConfig) -> bool:
+        return bool(instance.fullscreen or (config.fullscreen and not instance.width))
+
+    @staticmethod
+    def sync_game_options(instance: Instance, config: AppConfig) -> None:
+        """Переносит настройку «Полный экран» в options.txt.
+
+        Флаг ``--fullscreen`` игра перекрывает значением из options.txt (его меняет F11),
+        поэтому без этого переключатель в лаунчере срабатывал не всегда.
+        """
+        path = instance.game_dir / "options.txt"
+        value = "true" if MinecraftManager.wants_fullscreen(instance, config) else "false"
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines() if path.exists() else []
+            for i, line in enumerate(lines):
+                if line.startswith("fullscreen:"):
+                    if line == f"fullscreen:{value}":
+                        return
+                    lines[i] = f"fullscreen:{value}"
+                    break
+            else:
+                lines.append(f"fullscreen:{value}")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except OSError as e:
+            logger.warning(f"Не удалось обновить options.txt: {e}")
+
     def build_command(self, instance: Instance, launch_id: str, credentials: dict[str, str],
                       config: AppConfig, server: str = "", port: int = 25565) -> list[str]:
         """Собирает команду запуска с учётом настроек инстанса и глобальных."""
@@ -265,6 +307,6 @@ class MinecraftManager:
             command = mll.command.get_minecraft_command(launch_id, self.minecraft_dir, options)
         except mll.exceptions.VersionNotFound as e:
             raise NotFoundError(f"Версия '{launch_id}' не установлена") from e
-        if instance.fullscreen or (config.fullscreen and not instance.width):
+        if self.wants_fullscreen(instance, config):
             command.append("--fullscreen")
         return command

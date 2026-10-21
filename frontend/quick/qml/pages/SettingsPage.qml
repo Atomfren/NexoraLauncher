@@ -89,6 +89,16 @@ Item {
                     }
                 }
                 NxSettingRow {
+                    label: I18n.t("q.sidebar_position")
+                    NxSegmentedControl {
+                        value: Shell.sidebarPosition
+                        model: [{ value: "left", label: I18n.t("q.side_left") }, { value: "right", label: I18n.t("q.side_right") },
+                                { value: "top", label: I18n.t("q.side_top") }, { value: "bottom", label: I18n.t("q.side_bottom") }]
+                        onActivated: val => Shell.setSidebarPosition(val)
+                    }
+                }
+                NxSettingRow {
+                    visible: Shell.sidebarPosition === "left" || Shell.sidebarPosition === "right"
                     label: I18n.t("q.narrow_sidebar")
                     NxToggle { checked: !Shell.sidebarWide; onToggled: Shell.toggleSidebar() }
                 }
@@ -107,6 +117,29 @@ Item {
                 NxSettingRow {
                     label: I18n.t("q.hide_on_launch")
                     NxToggle { checked: !!page.v.hide_on_launch; onToggled: Prefs.save({ hide_on_launch: checked }) }
+                }
+                // Запасной путь для сборок CurseForge (All The Mods), если API FTB недоступен
+                NxSettingRow {
+                    label: I18n.t("q.cf_key")
+                    hint: page.v.curseforge_key_set ? I18n.t("q.cf_key_set") : I18n.t("q.cf_key_hint")
+                    Row {
+                        spacing: 8
+                        NxTextField {
+                            id: cfKey
+                            width: 220
+                            mono: true
+                            placeholder: page.v.curseforge_key_set ? "••••••••" : I18n.t("q.cf_key_placeholder")
+                            input.echoMode: TextInput.Password
+                            onAccepted: if (text.trim()) { Prefs.save({ curseforge_api_key: text.trim() }); text = "" }
+                        }
+                        NxButton {
+                            visible: !!page.v.curseforge_key_set
+                            small: true; variant: "ghost"; iconName: "x"
+                            text: I18n.t("q.remove")
+                            anchors.verticalCenter: parent.verticalCenter
+                            onClicked: Prefs.save({ curseforge_api_key: "" })
+                        }
+                    }
                 }
             }
 

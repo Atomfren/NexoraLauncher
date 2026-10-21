@@ -26,6 +26,7 @@ class SettingsResponse(BaseModel):
     last_instance: str
     hide_on_launch: bool
     check_updates: bool
+    curseforge_key_set: bool = False
 
 
 class SettingsUpdate(BaseModel):
@@ -42,6 +43,8 @@ class SettingsUpdate(BaseModel):
     last_instance: str | None = None
     hide_on_launch: bool | None = None
     check_updates: bool | None = None
+    # Ключ передаётся только на запись; хранится зашифрованным, наружу не отдаётся
+    curseforge_api_key: str | None = Field(None, max_length=200)
 
 
 class JavaInfo(BaseModel):
@@ -60,14 +63,28 @@ class SystemInfo(BaseModel):
     logs_dir: str
 
 
+def _public(config: AppConfig) -> dict:
+    data = config.to_dict()
+    data["curseforge_key_set"] = bool(data.pop("curseforge_key_enc", ""))
+    return data
+
+
 @router.get("/settings/", response_model=SettingsResponse)
 def get_settings():
-    return AppConfig.load().to_dict()
+    return _public(AppConfig.load())
 
 
 @router.patch("/settings/", response_model=SettingsResponse)
 def update_settings(changes: SettingsUpdate):
-    return AppConfig.load().update(**changes.model_dump(exclude_unset=True)).to_dict()
+    values = changes.model_dump(exclude_unset=True)
+    if "curseforge_api_key" in values:
+        from shared.crypto import TokenVault
+        key = (values.pop("curseforge_api_key") or "").strip()
+        values["curseforge_key_enc"] = TokenVault.encrypt(key) if key else ""
+    config = AppConfig.load()
+    if values.get("curseforge_key_enc") == "":
+        config.curseforge_key_enc = ""  # update() пропускает пустые значения только для None
+    return _public(config.update(**values))
 
 
 @router.get("/settings/system", response_model=SystemInfo)

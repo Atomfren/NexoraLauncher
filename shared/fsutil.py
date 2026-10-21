@@ -124,3 +124,55 @@ def dir_size(path: Path) -> int:
         except OSError:
             pass
     return total
+
+
+def remove_tree(path: Path, attempts: int = 5) -> None:
+    """``shutil.rmtree``, устойчивый к Windows: снимает «только чтение» и повторяет попытку.
+
+    Антивирус и индексатор ненадолго открывают свежие файлы — из-за этого удаление
+    иногда падает с «Отказано в доступе», хотя через долю секунды проходит.
+    """
+    import shutil
+    import stat
+    import sys
+    import time
+
+    def retry_writable(func, target, _exc) -> None:
+        try:
+            os.chmod(target, stat.S_IWRITE)
+            func(target)
+        except FileNotFoundError:
+            pass
+
+    for attempt in range(attempts):
+        try:
+            if sys.version_info >= (3, 12):
+                shutil.rmtree(path, onexc=retry_writable)
+            else:
+                shutil.rmtree(path, onerror=retry_writable)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(0.25 * (attempt + 1))
+
+
+def processes_using(path: Path) -> list[str]:
+    """Процессы, в командной строке которых есть этот путь (обычно — запущенная игра). Только Windows."""
+    import subprocess
+    import sys
+    if sys.platform != "win32":
+        return []
+    needle = str(path).replace("'", "''")
+    script = ("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and "
+              f"$_.CommandLine.IndexOf('{needle}', [StringComparison]::OrdinalIgnoreCase) -ge 0 }} | "
+              "ForEach-Object { \"$($_.Name) (PID $($_.ProcessId))\" }")
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                             capture_output=True, text=True, timeout=15,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [line.strip() for line in out.stdout.splitlines() if line.strip() and "powershell" not in line.lower()]

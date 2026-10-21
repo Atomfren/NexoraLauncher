@@ -38,6 +38,10 @@ def load_fonts() -> tuple[str, str]:
     return pick(_UI_FALLBACKS), pick(_MONO_FALLBACKS)
 
 
+# Где может стоять боковая панель (выбор в «Настройки → Общие»)
+SIDEBAR_POSITIONS = ("left", "right", "top", "bottom")
+
+
 class I18nBridge(QObject):
     @pyqtSlot(str, result=str)
     def t(self, key: str) -> str:
@@ -60,9 +64,11 @@ class I18nBridge(QObject):
 class Shell(QObject):
     darkChanged = pyqtSignal()
     sidebarWideChanged = pyqtSignal()
+    sidebarPositionChanged = pyqtSignal()
     pageChanged = pyqtSignal()
     tasksChanged = pyqtSignal()
     accountsChanged = pyqtSignal()
+    skinChanged = pyqtSignal()
     toastRequested = pyqtSignal(str, str)  # текст, вид: ok | err | info
     # Просьба открыть раздел; второй аргумент — подраздел (например, вкладка сборки)
     navigateRequested = pyqtSignal(str, str)
@@ -76,10 +82,14 @@ class Shell(QObject):
         self._fonts = fonts
         self._settings = QSettings("Atomfren", "NexoraLauncher")
         self._wide = self._settings.value("quick/sidebarWide", False, type=bool)
+        position = self._settings.value("quick/sidebarPosition", "left", type=str)
+        self._position = position if position in SIDEBAR_POSITIONS else "left"
         self._page = "library"
         self._active: list[dict] = []
         self._recent: list[dict] = []
         self._accounts: list[dict] = []
+        self._skin: dict = {}
+        self._skin_for = ""
         self._ms: dict = {"state": "idle"}
         self.tracker = TaskTracker(api, self)
         self.tracker.tasks_changed.connect(self._on_tasks)
@@ -111,6 +121,19 @@ class Shell(QObject):
         self._settings.setValue("quick/sidebarWide", self._wide)
         self.sidebarWideChanged.emit()
 
+    @pyqtProperty(str, notify=sidebarPositionChanged)
+    def sidebarPosition(self) -> str:
+        """Где боковая панель: left, right, top или bottom."""
+        return self._position
+
+    @pyqtSlot(str)
+    def setSidebarPosition(self, position: str) -> None:
+        if position not in SIDEBAR_POSITIONS or position == self._position:
+            return
+        self._position = position
+        self._settings.setValue("quick/sidebarPosition", position)
+        self.sidebarPositionChanged.emit()
+
     @pyqtProperty(str, notify=pageChanged)
     def page(self) -> str:
         return self._page
@@ -130,6 +153,11 @@ class Shell(QObject):
     @pyqtProperty(str, constant=True)
     def fontMono(self) -> str:
         return self._fonts[1]
+
+    @pyqtProperty(str, constant=True)
+    def website(self) -> str:
+        from shared.version import WEBSITE_URL
+        return WEBSITE_URL
 
     @pyqtProperty(str, constant=True)
     def version(self) -> str:
@@ -210,8 +238,71 @@ class Shell(QObject):
                 "seed": art.seed_of(a["username"]), "expired": bool(a.get("expired")),
             } for a in items]
             self.accountsChanged.emit()
+            active = self.account.get("id", "")
+            if active != self._skin_for:
+                self.loadSkin()
 
         run_async(self.api.accounts, done, lambda msg: logger.warning(f"Аккаунты не загружены: {msg}"), owner=self)
+
+    # --- Скин активного аккаунта (3D-модель в библиотеке) ------------------------------------------
+    @pyqtProperty("QVariantMap", notify=skinChanged)
+    def skin(self) -> dict:
+        """{skin, cape, slim, source} — пути к png для NxSkinView."""
+        return self._skin
+
+    @pyqtSlot()
+    def loadSkin(self) -> None:
+        account_id = self.account.get("id", "")
+        changed = account_id != self._skin_for
+        self._skin_for = account_id
+        if changed or not account_id:
+            # Не показываем скин прежнего аккаунта под новым ником, пока грузится новый
+            self._skin = {}
+            self.skinChanged.emit()
+        if not account_id:
+            return
+
+        def done(info: dict) -> None:
+            if self._skin_for == account_id:
+                self._skin = info
+                self.skinChanged.emit()
+
+        run_async(lambda: self.api.account_skin(account_id), done,
+                  lambda msg: logger.warning(f"Скин не загружен: {msg}"), owner=self)
+
+    @pyqtSlot(int)
+    def stepAccount(self, step: int) -> None:
+        """Стрелки у ника: следующий/предыдущий аккаунт."""
+        if len(self._accounts) < 2:
+            return
+        index = next((i for i, a in enumerate(self._accounts) if a["active"]), 0)
+        self.activateAccount(self._accounts[(index + step) % len(self._accounts)]["id"])
+
+    def _skin_call(self, call, done_text: str) -> None:
+        account_id = self.account.get("id", "")
+        if not account_id:
+            return
+
+        def done(info: dict) -> None:
+            self._skin = info
+            self.skinChanged.emit()
+            self.toast(done_text)
+
+        run_async(lambda: call(account_id), done, lambda msg: self.toast(msg, "err"), owner=self)
+
+    @pyqtSlot(str, bool)
+    def chooseSkin(self, url: str, slim: bool) -> None:
+        path = QUrl(url).toLocalFile() or url
+        self._skin_call(lambda a: self.api.set_account_skin(a, path, slim), t("q.skin_set"))
+
+    @pyqtSlot(str)
+    def chooseCape(self, url: str) -> None:
+        path = QUrl(url).toLocalFile() or url
+        self._skin_call(lambda a: self.api.set_account_cape(a, path), t("q.cape_set"))
+
+    @pyqtSlot()
+    def resetSkin(self) -> None:
+        self._skin_call(self.api.reset_account_skin, t("q.skin_reset"))
 
     @pyqtSlot(str)
     def activateAccount(self, account_id: str) -> None:

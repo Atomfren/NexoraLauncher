@@ -11,6 +11,8 @@
 
 import shutil
 import threading
+import time
+import uuid
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime
 from pathlib import Path
@@ -19,10 +21,20 @@ from typing import Any
 from loguru import logger
 
 from backend.core.errors import BadRequestError, ConflictError, NotFoundError
-from shared.fsutil import UnsafePathError, atomic_write_json, read_json, safe_join, validate_name
+from shared.fsutil import (
+    UnsafePathError,
+    atomic_write_json,
+    processes_using,
+    read_json,
+    remove_tree,
+    safe_join,
+    validate_name,
+)
 from shared.paths import get_instances_dir
 
 MOD_LOADERS = ("vanilla", "fabric", "quilt", "forge", "neoforge")
+# Папка удаляемой сборки переименовывается так, пока не сотрётся полностью
+_TRASH_PREFIX = ".deleting-"
 
 _lock = threading.RLock()
 
@@ -42,6 +54,29 @@ def instance_path(name: str) -> Path:
         return safe_join(get_instances_dir(), name)
     except UnsafePathError as e:
         raise BadRequestError(str(e)) from e
+
+
+
+def clean_title(title: str, folder: str) -> str:
+    """Отображаемое имя: пусто, если совпадает с именем папки."""
+    title = " ".join((title or "").split())[:64]
+    return "" if title == folder else title
+
+
+def folder_for_title(title: str, existing: set[str] | None = None) -> str:
+    """Имя папки для произвольного названия: само название, если оно допустимо, иначе очищенное."""
+    from shared.fsutil import sanitize_name
+    title = " ".join((title or "").split())
+    taken = {n.lower() for n in existing} if existing is not None else None
+    try:
+        base = validate_name(title)
+    except UnsafePathError:
+        base = sanitize_name(title, fallback="Instance")
+    name, i = base, 2
+    while (name.lower() in taken) if taken is not None else instance_path(name).exists():
+        name = f"{base} ({i})"
+        i += 1
+    return name
 
 
 @dataclass
@@ -64,6 +99,8 @@ class Instance:
     fullscreen: bool = False
     # Установленный OptiFine (имя файла, например OptiFine_1.20.1_HD_U_I6.jar) — только Vanilla и Forge
     optifine: str = ""
+    # Отображаемое имя, если оно не годится для папки (например, «Create: Above & Beyond»)
+    title: str = ""
     created_at: str = ""
     last_played: str = ""
     play_count: int = 0
@@ -122,6 +159,10 @@ class Instance:
             return None
 
     @property
+    def display_name(self) -> str:
+        return self.title or self.name
+
+    @property
     def is_modded(self) -> bool:
         return self.mod_loader != "vanilla"
 
@@ -131,6 +172,42 @@ class Instance:
             fresh = Instance.load(self.name) or self
             fresh.total_play_seconds += max(0, int(seconds))
             fresh.save()
+
+
+BACKGROUND_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif")
+_BACKGROUND_MAX_BYTES = 40 * 1024 * 1024
+
+
+def background_file(instance: "Instance") -> Path | None:
+    """Своё фото на фоне сборки (лежит в папке сборки как background-<время>.<расширение>)."""
+    try:
+        files = [p for p in instance.path.glob("background-*") if p.suffix.lower() in BACKGROUND_EXTENSIONS]
+    except OSError:
+        return None
+    return max(files, key=lambda p: p.name) if files else None
+
+
+def set_background(name: str, source: Path) -> Path:
+    """Копирует локальное фото в папку сборки и делает его фоном (старое удаляется)."""
+    instance = InstanceManager.get(name)
+    if source.suffix.lower() not in BACKGROUND_EXTENSIONS:
+        raise BadRequestError("Выберите картинку: PNG, JPG, BMP, WEBP или GIF")
+    if not source.is_file():
+        raise BadRequestError(f"Файл не найден: {source}")
+    if source.stat().st_size > _BACKGROUND_MAX_BYTES:
+        raise BadRequestError("Картинка слишком большая (больше 40 МБ)")
+    old = list(instance.path.glob("background-*"))
+    target = instance.path / f"background-{datetime.now():%Y%m%d%H%M%S%f}{source.suffix.lower()}"
+    shutil.copyfile(source, target)
+    for path in old:
+        path.unlink(missing_ok=True)
+    return target
+
+
+def clear_background(name: str) -> None:
+    instance = InstanceManager.get(name)
+    for path in instance.path.glob("background-*"):
+        path.unlink(missing_ok=True)
 
 
 class InstanceManager:
@@ -161,13 +238,14 @@ class InstanceManager:
         return instance
 
     @staticmethod
-    def create(name: str, version: str, mod_loader: str = "vanilla", loader_version: str = "") -> Instance:
+    def create(name: str, version: str, mod_loader: str = "vanilla", loader_version: str = "",
+               title: str = "") -> Instance:
         path = instance_path(name)
         with _lock:
             if path.exists():
                 raise ConflictError(f"Инстанс '{name}' уже существует")
             instance = Instance(name=name, version=version, mod_loader=mod_loader,
-                                loader_version=loader_version)
+                                loader_version=loader_version, title=clean_title(title, name))
             instance.save()
         logger.info(f"Инстанс '{name}' создан ({mod_loader} {version})")
         return instance
@@ -193,6 +271,7 @@ class InstanceManager:
                     jar.unlink()
         if instance.mod_loader not in MOD_LOADERS:
             raise BadRequestError(f"Неизвестный загрузчик: {instance.mod_loader}")
+        instance.title = clean_title(instance.title, instance.name)
         if loader_changed and "launch_version_id" not in changes:
             instance.launch_version_id = ""
         instance.save()
@@ -207,6 +286,7 @@ class InstanceManager:
                 raise ConflictError(f"Инстанс '{new_name}' уже существует")
             instance.path.rename(new_path)
         instance.name = new_name
+        instance.title = ""  # имя папки теперь и есть название
         instance.save()
         return instance
 
@@ -223,16 +303,61 @@ class InstanceManager:
         copy.play_count = 0
         copy.total_play_seconds = 0
         copy.last_played = ""
+        if source.title:
+            suffix = new_name[len(name):] if new_name.startswith(name) else ""
+            copy.title = clean_title(source.title + suffix if suffix else "", new_name)
         copy.save()
         return copy
 
     @staticmethod
     def delete(name: str) -> None:
+        """Удаляет сборку.
+
+        Папка сначала переименовывается: на Windows это не получится, если её держит процесс
+        (например, ещё работающая игра), — тогда сразу понятная ошибка, а сборка остаётся целой.
+        Остатки, которые не удалось стереть сразу, дочищаются при следующем запуске.
+        """
         path = instance_path(name)
         if not (path / "instance.json").exists():
             raise NotFoundError(f"Инстанс '{name}' не найден")
-        shutil.rmtree(path)
+        trash = path.with_name(f"{_TRASH_PREFIX}{uuid.uuid4().hex[:8]}")
+        for attempt in range(4):
+            try:
+                path.rename(trash)
+                break
+            except PermissionError as e:
+                if attempt < 3:
+                    time.sleep(0.3 * (attempt + 1))
+                    continue
+                holders = processes_using(path)
+                if holders:
+                    raise ConflictError(f"Сборку не удалить: её файлы заняты — {', '.join(holders)}. "
+                                        "Закройте игру и попробуйте снова.") from e
+                raise ConflictError("Сборку не удалить: файлы заняты другой программой "
+                                    "(открыта папка в Проводнике, антивирус или игра). "
+                                    "Закройте её и попробуйте снова.") from e
+        try:
+            remove_tree(trash)
+        except OSError as e:
+            logger.warning(f"Остатки сборки '{name}' будут удалены при следующем запуске: {e}")
         logger.info(f"Инстанс '{name}' удалён")
+
+    @staticmethod
+    def purge_leftovers() -> None:
+        """Дочищает папки от прерванных удалений: корзину и папки без instance.json и без файлов."""
+        root = get_instances_dir()
+        if not root.is_dir():
+            return
+        for path in root.iterdir():
+            if not path.is_dir():
+                continue
+            orphan = not (path / "instance.json").exists() and not any(p.is_file() for p in path.rglob("*"))
+            if path.name.startswith(_TRASH_PREFIX) or orphan:
+                try:
+                    remove_tree(path, attempts=2)
+                    logger.info(f"Удалены остатки: {path.name}")
+                except OSError as e:
+                    logger.debug(f"Остатки {path.name} пока заняты: {e}")
 
     @staticmethod
     def unique_name(base: str) -> str:

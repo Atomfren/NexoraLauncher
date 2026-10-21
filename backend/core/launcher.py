@@ -29,8 +29,9 @@ def launch_instance(name: str, server: str = "", port: int = 25565) -> Task:
         credentials = AuthManager.get_launch_credentials(config.ms_client_id)
         task.set_status("Запуск игры…")
         command = mc.build_command(instance, launch_id, credentials, config, server=server, port=port)
+        mc.sync_game_options(instance, config)
         game = process_manager.start(instance, command, credentials["username"], launch_id)
         AppConfig.load().update(last_instance=instance.name)
         return game.to_dict()
 
-    return task_manager.submit("launch", f"Запуск «{instance.name}»", run)
+    return task_manager.submit("launch", f"Запуск «{instance.display_name}»", run)

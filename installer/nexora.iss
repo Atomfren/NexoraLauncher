@@ -1,7 +1,7 @@
 ; Установщик NexoraLauncher (Inno Setup 6)
 ;
 ; Сборка: python scripts/build.py --installer
-; или вручную: ISCC.exe /DAppVersion=1.4.0 installer\nexora.iss  (после python scripts/build.py)
+; или вручную: ISCC.exe /DAppVersion=1.5.0 installer\nexora.iss  (после python scripts/build.py)
 ;
 ; Ставится для текущего пользователя в %LOCALAPPDATA%\Programs\NexoraLauncher, без прав администратора:
 ; автообновление лаунчера копирует новые файлы прямо в папку программы, и она должна быть доступна на запись.

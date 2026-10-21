@@ -210,3 +210,93 @@ def test_no_wildcard_cors(client):
 def test_ai_status_without_library(client):
     body = client.get("/api/v1/ai/status").json()
     assert body["available"] is False
+
+
+def test_display_title_separate_from_folder(client):
+    """«Create: Above & Beyond»: папка — очищенное имя, название — как ввёл пользователь."""
+    from backend.core.instance import folder_for_title
+    title = "Create: Above & Beyond"
+    folder = folder_for_title(title, set())
+    assert folder == "Create_ Above & Beyond"
+    assert folder_for_title(title, {"create_ above & beyond"}) == "Create_ Above & Beyond (2)"
+    assert folder_for_title("Survival", set()) == "Survival"
+
+    r = client.post("/api/v1/instances/", json={"name": folder, "version": "1.20.1", "title": title,
+                                                 "install": False})
+    assert r.status_code == 201 and r.json()["title"] == title
+    # Название, совпадающее с папкой, не хранится отдельно
+    assert client.patch(f"/api/v1/instances/{folder}", json={"title": folder}).json()["title"] == ""
+    assert client.patch(f"/api/v1/instances/{folder}", json={"title": "A: B"}).json()["title"] == "A: B"
+    # Переименование папки сбрасывает отдельное название
+    r = client.post(f"/api/v1/instances/{folder}/rename", json={"new_name": "Create"})
+    assert r.json()["name"] == "Create" and r.json()["title"] == ""
+
+
+def test_versions_list_cached_on_disk(client, monkeypatch):
+    """Список версий сохраняется на диск и показывается без сети."""
+    import datetime
+
+    import minecraft_launcher_lib as mll
+
+    from backend.core.minecraft import MinecraftManager
+    monkeypatch.setattr(MinecraftManager, "_versions_cache", None)
+    released = datetime.datetime(2024, 6, 13)
+    monkeypatch.setattr(mll.utils, "get_version_list",
+                        lambda: [{"id": "1.21", "type": "release", "releaseTime": released}])
+    assert [v["id"] for v in MinecraftManager().get_available_versions(force=True)] == ["1.21"]
+
+    def offline():
+        raise ConnectionError("нет сети")
+
+    monkeypatch.setattr(mll.utils, "get_version_list", offline)
+    monkeypatch.setattr(MinecraftManager, "_versions_cache", None)
+    assert [v["id"] for v in MinecraftManager().get_available_versions(force=True)] == ["1.21"]
+
+
+def test_delete_locked_instance_keeps_it_and_explains(client, monkeypatch):
+    """Файл сборки занят (игра ещё работает) — понятная ошибка 409, сборка цела; после закрытия удаляется."""
+    import sys
+
+    from backend.core import instance as instance_module
+    if sys.platform != "win32":
+        pytest.skip("Блокировка открытых файлов — особенность Windows")
+    monkeypatch.setattr(instance_module, "processes_using", lambda path: ["javaw.exe (PID 4242)"])
+    monkeypatch.setattr(instance_module.time, "sleep", lambda s: None)
+    create(client, name="Locked")
+    log = get_instances_dir() / "Locked" / ".minecraft" / "logs" / "latest.log"
+    log.parent.mkdir(parents=True)
+    with open(log, "w", encoding="utf-8"):
+        r = client.delete("/api/v1/instances/Locked")
+        assert r.status_code == 409 and "javaw.exe (PID 4242)" in r.json()["detail"]
+        assert client.get("/api/v1/instances/Locked").status_code == 200
+    assert client.delete("/api/v1/instances/Locked").status_code == 204
+    assert not any(get_instances_dir().iterdir())
+
+
+def test_purge_leftovers_of_interrupted_delete():
+    from backend.core.instance import InstanceManager
+    root = get_instances_dir()
+    (root / "Crash" / ".minecraft").mkdir(parents=True)  # остаток: пустые папки без instance.json
+    (root / ".deleting-1234" / "mods").mkdir(parents=True)
+    (root / ".deleting-1234" / "mods" / "a.jar").write_bytes(b"x")
+    (root / "Manual").mkdir()
+    (root / "Manual" / "notes.txt").write_text("мои файлы", encoding="utf-8")  # чужие файлы не трогаем
+    InstanceManager.purge_leftovers()
+    assert sorted(p.name for p in root.iterdir()) == ["Manual"]
+
+
+def test_custom_background_photo(client, tmp_path):
+    """Своё фото на фон: копируется в папку сборки, заменяет старое, сбрасывается."""
+    create(client)
+    photo = tmp_path / "Мой фон.JPG"
+    photo.write_bytes(b"\xff\xd8\xff fake jpeg")
+    r = client.put("/api/v1/instances/Test/background", json={"path": str(photo)})
+    assert r.status_code == 200
+    first = r.json()["background"]
+    assert first.endswith(".jpg") and (get_instances_dir() / "Test") in __import__("pathlib").Path(first).parents
+    second = client.put("/api/v1/instances/Test/background", json={"path": str(photo)}).json()["background"]
+    assert second != first and not __import__("pathlib").Path(first).exists()
+    bad = tmp_path / "notes.txt"
+    bad.write_text("x", encoding="utf-8")
+    assert client.put("/api/v1/instances/Test/background", json={"path": str(bad)}).status_code == 400
+    assert client.delete("/api/v1/instances/Test/background").json()["background"] == ""

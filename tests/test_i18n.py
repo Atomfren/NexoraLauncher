@@ -9,7 +9,7 @@ from shared import i18n
 
 ROOT = Path(__file__).resolve().parent.parent
 _KEY_CALL = re.compile(r'(?<![\w.])t\("([a-z_]+\.[a-z_]+)"')
-_KEY_LITERAL = re.compile(r'"((?:nav|browse|versions)\.[a-z_]+)"')
+_KEY_LITERAL = re.compile(r'"((?:nav|browse|versions|loghint)\.[a-z_]+)"')
 # Новый интерфейс: I18n.t("…") / I18n.tf("…") в QML и склоняемые ключи count(n, "q.…") → _one/_few/_many
 _QML_KEY = re.compile(r'I18n\.tf?\("([a-z_]+\.[a-z_]+)"')
 _PLURAL_BASE = re.compile(r'count\((?:[^,()]|\([^()]*\))+, *"([a-z_]+\.[a-z_]+)"')
@@ -33,7 +33,8 @@ _DYNAMIC_KEYS = (
 
 def _used_keys() -> set[str]:
     keys = set(_DYNAMIC_KEYS)
-    for path in (ROOT / "frontend").rglob("*.py"):
+    # Интерфейс и backend (Доктор, умные логи) берут тексты из одного словаря
+    for path in [*(ROOT / "frontend").rglob("*.py"), *(ROOT / "backend").rglob("*.py")]:
         text = path.read_text(encoding="utf-8")
         keys |= set(_KEY_CALL.findall(text)) | set(_KEY_LITERAL.findall(text))
     for path in (ROOT / "frontend").rglob("*.qml"):

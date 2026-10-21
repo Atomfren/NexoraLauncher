@@ -65,7 +65,7 @@ Item {
                 delegate: NxInstanceRow {
                     required property var model
                     width: list.width
-                    name: model.name
+                    name: model.title
                     loader: model.loader
                     version: model.version
                     playtime: model.playtime
@@ -144,6 +144,19 @@ Item {
                         }
                     }
 
+                    // Справа — персонаж активного аккаунта (кнопки папки и меню остаются в углу)
+                    AccountShowcase {
+                        objectName: "accountShowcase"
+                        z: 1
+                        visible: parent.width >= 820
+                        anchors.right: parent.right
+                        anchors.rightMargin: 110
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: 12
+                        width: implicitWidth
+                        height: implicitHeight
+                    }
+
                     Column {
                         anchors.left: parent.left
                         anchors.right: parent.right
@@ -155,7 +168,7 @@ Item {
 
                         NxText {
                             width: parent.width
-                            text: page.cur.name || ""
+                            text: page.cur.title || ""
                             variant: "display"
                             style: Text.Normal
                         }
@@ -274,6 +287,7 @@ Item {
             { text: I18n.t("q.duplicate"), icon: "copy", action: "duplicate" },
             { text: I18n.t("q.export"), icon: "archive", action: "export" },
             { text: I18n.t("q.open_folder"), icon: "folder", action: "folder" },
+            { text: I18n.t("q.background_pick"), icon: "image", action: "background" },
             { text: I18n.t("q.repair"), icon: "wrench", action: "repair" },
             { text: "OptiFine…", icon: "zap", action: "optifine" },
             { separator: true },
@@ -287,6 +301,7 @@ Item {
             else if (action === "folder") Shell.openPath(page.cur.gameDir)
             else if (action === "repair") Library.repair(target)
             else if (action === "optifine") optiSheet.open()
+            else if (action === "background") backgroundDialog.open()
             else if (action === "delete") deleteDialog.open()
         }
     }
@@ -295,7 +310,7 @@ Item {
         id: renamePrompt
         title: I18n.t("q.rename_build")
         label: I18n.t("q.name")
-        value: page.cur.name || ""
+        value: page.cur.title || ""
         onAccepted: text => Library.rename(page.cur.name, text)
     }
 
@@ -310,6 +325,13 @@ Item {
     }
 
     OptiFineSheet { id: optiSheet }
+
+    FileDialog {
+        id: backgroundDialog
+        fileMode: FileDialog.OpenFile
+        nameFilters: [I18n.t("q.images") + " (*.png *.jpg *.jpeg *.bmp *.webp *.gif)"]
+        onAccepted: Library.setBackground(page.cur.name, selectedFile.toString())
+    }
 
     FileDialog {
         id: exportDialog
@@ -362,7 +384,7 @@ Item {
     NxDialog {
         id: deleteDialog
         objectName: "deleteDialog"
-        title: I18n.tf("q.delete_title", { name: page.cur.name || "" })
+        title: I18n.tf("q.delete_title", { name: page.cur.title || "" })
         text: I18n.t("q.delete_text")
         onAccepted: Library.remove(page.cur.name)
     }

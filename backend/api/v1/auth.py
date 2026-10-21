@@ -72,3 +72,44 @@ def refresh_account(account_id: str):
 def remove_account(account_id: str):
     AuthManager.remove(account_id)
 
+
+
+# --- Скин и плащ (3D-модель персонажа в лаунчере) ----------------------------------------
+class SkinResponse(BaseModel):
+    skin: str
+    cape: str
+    slim: bool
+    source: str  # custom | mojang | default
+
+
+class SkinFileRequest(BaseModel):
+    path: str
+    slim: bool = False
+
+
+@router.get("/auth/accounts/{account_id}/skin", response_model=SkinResponse)
+def get_skin(account_id: str):
+    from backend.core import skins
+    return skins.skin_info(account_id)
+
+
+@router.put("/auth/accounts/{account_id}/skin", response_model=SkinResponse)
+def put_skin(account_id: str, request: SkinFileRequest):
+    from pathlib import Path
+
+    from backend.core import skins
+    return skins.set_custom_skin(account_id, Path(request.path), request.slim)
+
+
+@router.put("/auth/accounts/{account_id}/cape", response_model=SkinResponse)
+def put_cape(account_id: str, request: SkinFileRequest):
+    from pathlib import Path
+
+    from backend.core import skins
+    return skins.set_custom_cape(account_id, Path(request.path))
+
+
+@router.delete("/auth/accounts/{account_id}/skin", response_model=SkinResponse)
+def reset_skin(account_id: str):
+    from backend.core import skins
+    return skins.reset_custom(account_id)

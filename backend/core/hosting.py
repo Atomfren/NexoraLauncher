@@ -34,7 +34,7 @@ from backend.core.content import ContentManager
 from backend.core.errors import BadRequestError, ConflictError, ExternalServiceError, NotFoundError
 from backend.core.minecraft import with_network_retries
 from backend.core.tasks import Task
-from shared.fsutil import UnsafePathError, atomic_write_json, read_json, safe_join, validate_name
+from shared.fsutil import UnsafePathError, atomic_write_json, read_json, remove_tree, safe_join, validate_name
 from shared.paths import get_data_dir, get_minecraft_dir
 from shared.version import USER_AGENT
 
@@ -401,7 +401,7 @@ class HostingManager:
         if HostingManager.runtime(name):
             raise ConflictError("Сначала остановите сервер")
         server = HostingManager.get(name)
-        shutil.rmtree(server.path)
+        remove_tree(server.path)
 
     # --- server.properties ----------------------------------------------------------------
     @staticmethod
@@ -414,14 +414,16 @@ class HostingManager:
         unknown = set(changes) - EDITABLE_PROPERTIES
         if unknown:
             raise BadRequestError(f"Нельзя изменить: {', '.join(sorted(unknown))}")
-        values = read_properties(server.path / "server.properties")
-        for key, value in changes.items():
-            value = str(value).lower() if isinstance(value, bool) else str(value)
-            if "\n" in value or "\r" in value:
-                raise BadRequestError("Недопустимое значение")
-            values[key] = value
-        values["server-port"] = str(server.port)
-        write_properties(server.path / "server.properties", values)
+        # Параллельные PATCH не должны затирать изменения друг друга
+        with HostingManager._lock:
+            values = read_properties(server.path / "server.properties")
+            for key, value in changes.items():
+                value = str(value).lower() if isinstance(value, bool) else str(value)
+                if "\n" in value or "\r" in value:
+                    raise BadRequestError("Недопустимое значение")
+                values[key] = value
+            values["server-port"] = str(server.port)
+            write_properties(server.path / "server.properties", values)
         return values
 
     # --- Запуск / остановка -------------------------------------------------------------

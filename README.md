@@ -3,7 +3,7 @@
 Лаунчер Minecraft: Java Edition с отдельными инстансами, загрузчиками модов и каталогом Modrinth.
 Backend на FastAPI, интерфейс на Qt Quick (QML, PyQt6).
 
-**Версия 1.4.0 «OptiFine и умные логи»** · Windows / Linux / macOS · Python 3.11+ · GPL-3.0
+**Версия 1.5.0 «Всё на своих местах»** · Windows / Linux / macOS · Python 3.11+ · GPL-3.0
 
 ## Возможности
 

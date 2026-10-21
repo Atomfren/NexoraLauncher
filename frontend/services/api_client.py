@@ -73,6 +73,9 @@ class ApiClient:
     def patch(self, path: str, json_body: Any) -> Any:
         return self.request("PATCH", path, json=json_body)
 
+    def put(self, path: str, json_body: Any) -> Any:
+        return self.request("PUT", path, json=json_body)
+
     def delete(self, path: str, **params) -> Any:
         return self.request("DELETE", path, params=params or None)
 
@@ -97,9 +100,9 @@ class ApiClient:
         return self.get(f"/instances/{_q(name)}")
 
     def create_instance(self, name: str, version: str, mod_loader: str = "vanilla",
-                        loader_version: str = "", install: bool = True) -> dict:
+                        loader_version: str = "", install: bool = True, title: str = "") -> dict:
         return self.post("/instances/", {"name": name, "version": version, "mod_loader": mod_loader,
-                                         "loader_version": loader_version, "install": install})
+                                         "loader_version": loader_version, "install": install, "title": title})
 
     def update_instance(self, name: str, **changes) -> dict:
         return self.patch(f"/instances/{_q(name)}", changes)
@@ -109,6 +112,12 @@ class ApiClient:
 
     def rename_instance(self, name: str, new_name: str) -> dict:
         return self.post(f"/instances/{_q(name)}/rename", {"new_name": new_name})
+
+    def set_background(self, name: str, path: str) -> dict:
+        return self.put(f"/instances/{_q(name)}/background", {"path": path})
+
+    def clear_background(self, name: str) -> dict:
+        return self.delete(f"/instances/{_q(name)}/background")
 
     def duplicate_instance(self, name: str, new_name: str) -> dict:
         return self.post(f"/instances/{_q(name)}/duplicate", {"new_name": new_name})
@@ -163,6 +172,17 @@ class ApiClient:
 
     def project(self, project_id: str) -> dict:
         return self.get(f"/content/projects/{_q(project_id)}")
+
+    # --- Сборки FTB и CurseForge (через API FTB) -----------------------------------------------------
+    def packs_search(self, provider: str, query: str = "", limit: int = 20) -> dict:
+        return self.get(f"/packs/{_q(provider)}/search", q=query, limit=limit)
+
+    def pack(self, provider: str, pack_id: str) -> dict:
+        return self.get(f"/packs/{_q(provider)}/{_q(pack_id)}")
+
+    def install_pack(self, provider: str, pack_id: str, version_id: int | None = None, new_name: str = "") -> dict:
+        return self.post(f"/packs/{_q(provider)}/{_q(pack_id)}/install",
+                         {"version_id": version_id, "new_name": new_name})
 
     def project_versions(self, project_id: str, game_version: str | None = None,
                          loader: str | None = None) -> list[dict]:
@@ -358,6 +378,18 @@ class ApiClient:
 
     def activate_account(self, account_id: str) -> dict:
         return self.post(f"/auth/accounts/{_q(account_id)}/activate")
+
+    def account_skin(self, account_id: str) -> dict:
+        return self.get(f"/auth/accounts/{_q(account_id)}/skin")
+
+    def set_account_skin(self, account_id: str, path: str, slim: bool) -> dict:
+        return self.put(f"/auth/accounts/{_q(account_id)}/skin", {"path": path, "slim": slim})
+
+    def set_account_cape(self, account_id: str, path: str) -> dict:
+        return self.put(f"/auth/accounts/{_q(account_id)}/cape", {"path": path})
+
+    def reset_account_skin(self, account_id: str) -> dict:
+        return self.delete(f"/auth/accounts/{_q(account_id)}/skin")
 
     def remove_account(self, account_id: str) -> None:
         self.delete(f"/auth/accounts/{_q(account_id)}")

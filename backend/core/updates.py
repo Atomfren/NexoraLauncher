@@ -7,6 +7,7 @@
   и флаги JVM.
 """
 
+import time
 from datetime import datetime
 from typing import Any
 
@@ -14,7 +15,7 @@ from loguru import logger
 
 from backend.core import snapshots
 from backend.core.content import ContentManager, compatible_loaders
-from backend.core.errors import BadRequestError, NexoraError
+from backend.core.errors import BadRequestError, ExternalServiceError, NexoraError
 from backend.core.instance import InstanceManager
 from backend.core.mod_metadata import scan_mods
 from backend.core.tasks import Task
@@ -23,6 +24,7 @@ from shared.system import recommended_memory_mb
 
 _DISABLED = ".disabled"
 
+_TURBO_ATTEMPTS = 3
 # Проверенные оптимизации: slug → загрузчики, для которых он ставится
 TURBO_MODS: list[tuple[str, tuple[str, ...]]] = [
     ("sodium", ("fabric", "quilt", "neoforge")),
@@ -176,18 +178,29 @@ def turbo_plan(instance_name: str) -> dict[str, Any]:
 def apply_turbo(instance_name: str, task: Task | None = None, tune_jvm: bool = True) -> dict[str, Any]:
     plan = turbo_plan(instance_name)
     snapshots.create(instance_name, "Перед «Турбо»", auto=True)
-    installed, skipped = [], []
+    installed, skipped, failed = [], [], []
     modrinth = get_modrinth()
     for slug in plan["mods"]:
-        if task:
-            task.set_status(f"«Турбо»: {slug}…")
-        try:
-            project_id = modrinth.get_project(slug)["id"]
-            result = ContentManager.install(instance_name, "mod", project_id, task=task)
-            installed += [r["title"] for r in result]
-        except NexoraError as e:
-            logger.info(f"«Турбо»: {slug} пропущен — {e}")
-            skipped.append(slug)
+        for attempt in range(1, _TURBO_ATTEMPTS + 1):
+            if task:
+                task.set_status(f"«Турбо»: {slug}…" if attempt == 1 else f"«Турбо»: {slug}, попытка {attempt}…")
+            try:
+                project_id = modrinth.get_project(slug)["id"]
+                result = ContentManager.install(instance_name, "mod", project_id, task=task)
+                installed += [r["title"] for r in result]
+                break
+            except ExternalServiceError as e:
+                # Сбой сети: раньше мод молча пропускался, и «Турбо» срабатывал через раз
+                if attempt == _TURBO_ATTEMPTS:
+                    logger.warning(f"«Турбо»: {slug} не скачан — {e}")
+                    failed.append(slug)
+                else:
+                    time.sleep(attempt)
+            except NexoraError as e:
+                logger.info(f"«Турбо»: {slug} пропущен — {e}")
+                skipped.append(slug)
+                break
     if tune_jvm:
         InstanceManager.update(instance_name, max_memory=plan["max_memory"], jvm_args=plan["jvm_args"])
-    return {"installed": installed, "skipped": skipped, "max_memory": plan["max_memory"] if tune_jvm else None}
+    return {"installed": installed, "skipped": skipped, "failed": failed,
+            "max_memory": plan["max_memory"] if tune_jvm else None}

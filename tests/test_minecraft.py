@@ -85,6 +85,23 @@ def test_build_command_global_defaults_and_fullscreen(captured_options):
     assert command[-1] == "--fullscreen"
 
 
+def test_fullscreen_synced_to_options_txt():
+    """options.txt (его меняет F11) перекрывает --fullscreen, поэтому лаунчер пишет туда свою настройку."""
+    instance = InstanceManager.create("Opt", "1.20.1")
+    options = instance.game_dir / "options.txt"
+    options.parent.mkdir(parents=True, exist_ok=True)
+    options.write_text("version:3465\nfullscreen:false\nguiScale:2\n", encoding="utf-8")
+    instance.fullscreen = True
+    MinecraftManager.sync_game_options(instance, AppConfig())
+    assert options.read_text(encoding="utf-8").splitlines() == ["version:3465", "fullscreen:true", "guiScale:2"]
+    instance.fullscreen = False
+    MinecraftManager.sync_game_options(instance, AppConfig())
+    assert "fullscreen:false" in options.read_text(encoding="utf-8")
+    fresh = InstanceManager.create("New", "1.20.1")
+    MinecraftManager.sync_game_options(fresh, AppConfig(fullscreen=True))
+    assert (fresh.game_dir / "options.txt").read_text(encoding="utf-8") == "fullscreen:true\n"
+
+
 def test_build_command_rejects_missing_java(captured_options):
     instance = InstanceManager.create("J", "1.20.1")
     instance.java_path = "/definitely/not/java"

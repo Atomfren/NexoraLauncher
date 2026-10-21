@@ -1,5 +1,6 @@
 // Миры сборки
 import QtQuick
+import QtQuick.Dialogs
 import Nexora
 
 TabPage {
@@ -11,12 +12,20 @@ TabPage {
         height: 28
         visible: Build.worlds.length > 0
         NxText { anchors.verticalCenter: parent.verticalCenter; text: I18n.count(Build.worlds.length, "q.worlds"); muted: true }
-        NxButton {
+        Row {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            small: true; variant: "ghost"; iconName: "folder"
-            text: I18n.t("q.saves_folder")
-            onClicked: Shell.openPath(Library.current.gameDir + "/saves")
+            spacing: 4
+            NxButton {
+                small: true; variant: "ghost"; iconName: "import"
+                text: I18n.t("q.import_world")
+                onClicked: importDialog.open()
+            }
+            NxButton {
+                small: true; variant: "ghost"; iconName: "folder"
+                text: I18n.t("q.saves_folder")
+                onClicked: Shell.openPath(Library.current.gameDir + "/saves")
+            }
         }
     }
     Item { width: 1; height: 8; visible: Build.worlds.length > 0 }
@@ -28,6 +37,11 @@ TabPage {
             world: modelData
             large: true
             onDeleteRequested: { root.target = modelData.name; confirm.open() }
+            onExportRequested: {
+                root.target = modelData.name
+                exportDialog.currentFile = "file:///" + modelData.name + ".zip"
+                exportDialog.open()
+            }
         }
     }
     NxEmptyState {
@@ -42,6 +56,25 @@ TabPage {
             enabled: Library.current.state === "ready"
             onClicked: Library.play(Library.current.name)
         }
+        NxButton {
+            variant: "ghost"
+            text: I18n.t("q.import_world")
+            iconName: "import"
+            onClicked: importDialog.open()
+        }
+    }
+
+    FileDialog {
+        id: importDialog
+        fileMode: FileDialog.OpenFile
+        nameFilters: [I18n.t("q.world_archive") + " (*.zip)"]
+        onAccepted: Build.importWorld(selectedFile.toString())
+    }
+    FileDialog {
+        id: exportDialog
+        fileMode: FileDialog.SaveFile
+        nameFilters: [I18n.t("q.world_archive") + " (*.zip)"]
+        onAccepted: Build.exportWorld(root.target, selectedFile.toString())
     }
 
     NxDialog {

@@ -1,4 +1,4 @@
-"""Каталог Modrinth: поиск, фильтры, установка в сборку (или свой сервер для плагинов)."""
+"""Каталог: Modrinth (моды, ресурсы, шейдеры, плагины, модпаки) и сборки FTB и CurseForge (через API FTB)."""
 
 from typing import Any
 
@@ -14,6 +14,21 @@ from frontend.utils.worker import run_async
 from shared.i18n import t
 
 PAGE = 30
+# Источники модпаков: Modrinth или сборки FTB / CurseForge (All The Mods и др.) через API FTB
+PACK_SOURCES = ("modrinth", "ftb", "curseforge")
+
+
+def split_pack_id(project_id: str) -> tuple[str, str] | None:
+    """«ftb:135» → ("ftb", "135"); для проектов Modrinth — None."""
+    provider, sep, pack_id = project_id.partition(":")
+    return (provider, pack_id) if sep and provider in PACK_SOURCES[1:] else None
+
+
+def filter_packs(rows: list[dict], version: str, loader: str) -> list[dict]:
+    """У FTB нет серверных фильтров: отбираем по версии игры и загрузчику свежей версии сборки."""
+    return [r for r in rows
+            if (not version or any(v.startswith(version) for v in r.get("versions") or []))
+            and (not loader or loader in (r.get("loaders") or []))]
 # Тип каталога → тип контента сборки (None — модпак ставится новой сборкой, plugin — на свой сервер)
 CONTENT_TYPE = {"mod": "mod", "resourcepack": "resourcepack", "shader": "shader", "modpack": None, "plugin": None}
 CATEGORIES = {
@@ -61,6 +76,7 @@ class Catalog(QObject):
         self.shell = shell
         self.library = library
         self._type = "mod"
+        self._source = "modrinth"
         self._query = ""
         self._version = ""
         self._loader = ""
@@ -88,6 +104,24 @@ class Catalog(QObject):
     @pyqtProperty(str, notify=changed)
     def type(self) -> str:
         return self._type
+
+    @pyqtProperty(str, notify=changed)
+    def source(self) -> str:
+        """Источник модпаков: modrinth, ftb или curseforge."""
+        return self._source
+
+    @pyqtSlot(str)
+    def setSource(self, value: str) -> None:
+        if value not in PACK_SOURCES or value == self._source:
+            return
+        self._source = value
+        self._category = ""
+        self.changed.emit()
+        self.search()
+
+    @property
+    def _external(self) -> bool:
+        return self._type == "modpack" and self._source != "modrinth"
 
     @pyqtProperty(str, notify=changed)
     def query(self) -> str:
@@ -120,7 +154,7 @@ class Catalog(QObject):
             return [{"value": s["name"], "label": s["name"], "loader": s.get("core", "paper")} for s in self._servers]
         if self._type == "modpack":
             return []
-        return [{"value": e["name"], "label": e["name"], "loader": e["loader"]} for e in self.library.entries()]
+        return [{"value": e["name"], "label": e["title"], "loader": e["loader"]} for e in self.library.entries()]
 
     @pyqtProperty("QVariantList", notify=changed)
     def categories(self) -> list[dict]:
@@ -245,6 +279,9 @@ class Catalog(QObject):
         if offset == 0:
             self._results = []
         self.resultsChanged.emit()
+        if self._external:
+            self._load_packs(gen)
+            return
         loader = self._loader or None
         if self._type == "plugin":
             server = next((s for s in self._servers if s["name"] == self._target), None)
@@ -270,6 +307,29 @@ class Catalog(QObject):
             self.resultsChanged.emit()
 
         run_async(lambda: self.api.search(**params), done, failed, owner=self)
+
+    def _load_packs(self, gen: int) -> None:
+        source, query, version, loader = self._source, self._query, self._version, self._loader
+
+        def done(data: dict) -> None:
+            if gen != self._gen:
+                return
+            hits = filter_packs([dict(h, versions=h.get("game_versions") or []) for h in data.get("results", [])],
+                                version, loader)
+            self._results = [dict(project_row(h, self._state_of(h["project_id"])), provider=source,
+                                  packVersions=h.get("versions") or []) for h in hits]
+            self._total = len(self._results)
+            self._loading = False
+            self.resultsChanged.emit()
+
+        def failed(message: str) -> None:
+            if gen != self._gen:
+                return
+            self._loading = False
+            self._error = message
+            self.resultsChanged.emit()
+
+        run_async(lambda: self.api.packs_search(source, query), done, failed, owner=self)
 
     # --- Установка ------------------------------------------------------------------------------
     def _state_of(self, project_id: str) -> str:
@@ -325,7 +385,10 @@ class Catalog(QObject):
         if kind != "modpack" and not target:
             self.shell.toast(t("q.pick_target"), "err")
             return
-        if kind == "modpack":
+        external = split_pack_id(project_id)
+        if external:
+            call = lambda: self.api.install_pack(*external)  # noqa: E731
+        elif kind == "modpack":
             call = lambda: self.api.install_modpack(project_id)  # noqa: E731
         elif kind == "plugin":
             call = lambda: self.api.install_server_mod(target, project_id)  # noqa: E731
@@ -339,12 +402,15 @@ class Catalog(QObject):
             self._busy.pop(project_id, None)
             self._progress.pop(project_id, None)
             if kind == "modpack":
-                name = (task.get("result") or {}).get("name", title)
-                self.shell.toast(t("q.pack_installed", name=name))
+                result = task.get("result") or {}
+                name = result.get("name", title)
+                self.shell.toast(t("q.pack_installed", name=self.library.titleOf(name) if name else title))
+                if result.get("blocked"):
+                    self.shell.toast(t("q.pack_blocked", mods=", ".join(result["blocked"][:6])), "err")
                 self.library.refresh()
             else:
                 self._installed.add(project_id)
-                self.shell.toast(t("q.installed_into", name=title, target=target))
+                self.shell.toast(t("q.installed_into", name=title, target=self.library.titleOf(target)))
                 self.library.contentInstalled.emit(target)
             self._restate()
 
@@ -368,6 +434,10 @@ class Catalog(QObject):
         self._versions = []
         self.projectChanged.emit()
         kind, version, loader = self._type, self._version or None, self._loader or None
+        external = split_pack_id(project_id)
+        if external:
+            self._open_pack(project_id, *external)
+            return
 
         def fetch():
             project = self.api.project(project_id)
@@ -395,6 +465,27 @@ class Catalog(QObject):
             logger.warning(f"Проект не загружен: {message}")
 
         run_async(fetch, done, failed, owner=self)
+
+    def _open_pack(self, project_id: str, provider: str, pack_id: str) -> None:
+        """Карточка сборки FTB / CurseForge: галерея и версии из API FTB."""
+        def done(data: dict) -> None:
+            if self._project.get("id") != project_id:
+                return
+            self._project = dict(self._project, gallery=[remote_ref(u) for u in data.get("gallery") or [] if u],
+                                 loadingDetails=False, followers="",
+                                 allVersions=data.get("game_versions") or [], allLoaders=data.get("loaders") or [])
+            self._versions = [{"id": str(v["id"]), "number": v.get("name", ""), "type": v.get("type", ""),
+                               "mc": v.get("mc", ""), "date": fmt.when(v.get("updated") or None)}
+                              for v in (data.get("versions") or [])[:8]]
+            self.projectChanged.emit()
+
+        def failed(message: str) -> None:
+            if self._project.get("id") == project_id:
+                self._project = dict(self._project, loadingDetails=False)
+                self.projectChanged.emit()
+            logger.warning(f"Сборка не загружена: {message}")
+
+        run_async(lambda: self.api.pack(provider, pack_id), done, failed, owner=self)
 
     @pyqtSlot()
     def closeProject(self) -> None:

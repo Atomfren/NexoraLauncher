@@ -19,6 +19,7 @@ from frontend.quick.settings import Settings
 from frontend.quick.wizard import Wizard
 from frontend.services.api_client import ApiClient
 from frontend.utils.logger import logger
+from frontend.utils.worker import run_async
 
 QML_DIR = Path(__file__).resolve().parent / "qml"
 
@@ -57,9 +58,36 @@ class QuickUi:
                           ("Wizard", self.wizard), ("Network", self.network), ("Prefs", self.settings),
                           ("OptiFine", self.optifine)):
             ctx.setContextProperty(name, obj)
+        self._minimized_for: str = ""
+        self.library.gameStarted.connect(self._on_game_started)
+        self.library.gameExited.connect(self._on_game_exited)
         self.engine.warnings.connect(lambda warnings: [logger.warning(f"QML: {w.toString()}") for w in warnings])
 
+    def _on_game_started(self, name: str) -> None:
+        """Сворачивает окно, если включено «Сворачивать лаунчер при запуске игры»."""
+        def done(settings: dict) -> None:
+            window = self.window
+            if settings.get("hide_on_launch") and window is not None:
+                self._minimized_for = name
+                window.showMinimized()
+
+        run_async(self.api.settings, done, lambda msg: logger.warning(f"Настройки не загружены: {msg}"),
+                  owner=self.library)
+
+    def _on_game_exited(self, name: str, _code: int) -> None:
+        """Игра закрыта — возвращаем окно, если сворачивали его сами."""
+        window = self.window
+        if self._minimized_for == name and window is not None:
+            self._minimized_for = ""
+            window.showNormal()
+            window.raise_()
+            window.requestActivate()
+
     def show(self) -> bool:
+        from PyQt6.QtQml import qmlRegisterType
+
+        from frontend.quick.skinview import SkinView
+        qmlRegisterType(SkinView, "Nexora.Skin", 1, 0, "NxSkinView")
         self.engine.load(QUrl.fromLocalFile(str(QML_DIR / "Main.qml")))
         return bool(self.engine.rootObjects())
 

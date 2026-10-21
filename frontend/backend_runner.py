@@ -38,8 +38,10 @@ class EmbeddedBackend:
         settings.api_token = self.token
         from backend.main import app
 
+        # Зависшие соединения закрываются через 3 с: остановка должна завершаться внутри stop(),
+        # иначе запоздалое завершение backend отменяло задачи уже следующего запуска (и тестов)
         config = uvicorn.Config(app, host="127.0.0.1", port=self.port, log_level="warning",
-                                access_log=False, log_config=None)
+                                access_log=False, log_config=None, timeout_graceful_shutdown=3)
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(target=self._server.run, name="nexora-backend", daemon=True)
         self._thread.start()
@@ -56,4 +58,6 @@ class EmbeddedBackend:
         if self._server:
             self._server.should_exit = True
         if self._thread:
-            self._thread.join(timeout=5)
+            self._thread.join(timeout=20)
+            if self._thread.is_alive():
+                logger.warning("Встроенный backend не остановился за 20 с")

@@ -7,6 +7,7 @@ Rectangle {
     property var world: ({})
     property bool large: false
     signal deleteRequested()
+    signal exportRequested()
 
     height: large ? 84 : 60
     radius: NxTheme.rButton
@@ -55,6 +56,7 @@ Rectangle {
         spacing: 4
         opacity: area.hovered || root.large ? 1 : 0
         NxIconButton { iconName: "folder"; small: !root.large; tip: I18n.t("q.open_folder"); onClicked: Shell.openPath(root.world.path) }
+        NxIconButton { visible: root.large; iconName: "share"; tip: I18n.t("q.export_world"); onClicked: root.exportRequested() }
         NxIconButton { visible: root.large; iconName: "trash"; tip: I18n.t("q.delete_world"); onClicked: root.deleteRequested() }
     }
 }

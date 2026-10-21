@@ -10,7 +10,14 @@ from pydantic import BaseModel, Field
 from backend.api.v1.tasks import TaskResponse
 from backend.core import snapshots
 from backend.core.errors import ConflictError
-from backend.core.instance import MOD_LOADERS, Instance, InstanceManager
+from backend.core.instance import (
+    MOD_LOADERS,
+    Instance,
+    InstanceManager,
+    background_file,
+    clear_background,
+    set_background,
+)
 from backend.core.launcher import launch_instance
 from backend.core.minecraft import MinecraftManager
 from backend.core.pack_manager import PackManager
@@ -26,6 +33,7 @@ class InstanceCreate(BaseModel):
     version: str = Field(..., min_length=1, max_length=64)
     mod_loader: str = Field("vanilla", pattern=_LOADER_PATTERN)
     loader_version: str = ""
+    title: str = Field("", max_length=64, description="Отображаемое имя, если отличается от папки")
     install: bool = Field(True, description="Сразу запустить установку игры и загрузчика")
 
 
@@ -40,6 +48,7 @@ class InstanceUpdate(BaseModel):
     width: int | None = Field(None, ge=0, le=7680)
     height: int | None = Field(None, ge=0, le=4320)
     fullscreen: bool | None = None
+    title: str | None = Field(None, max_length=64)
 
 
 class InstanceResponse(BaseModel):
@@ -56,6 +65,7 @@ class InstanceResponse(BaseModel):
     height: int
     fullscreen: bool
     optifine: str = ""
+    title: str = ""
     created_at: str
     last_played: str
     play_count: int
@@ -64,6 +74,7 @@ class InstanceResponse(BaseModel):
     game_dir: str
     installed: bool
     running_pid: int | None = None
+    background: str = ""
 
 
 class NameRequest(BaseModel):
@@ -100,6 +111,8 @@ def to_response(instance: Instance, mc: MinecraftManager | None = None) -> dict[
         installed=bool(launch_id) and mc.is_version_installed(launch_id),
         running_pid=running.pid if running else None,
     )
+    custom = background_file(instance)
+    data["background"] = str(custom) if custom else ""
     return data
 
 
@@ -108,7 +121,7 @@ def _prepare_task(instance: Instance, force: bool = False):
         launch_id = MinecraftManager().prepare_instance(instance, task, force=force)
         return {"name": instance.name, "launch_version_id": launch_id}
 
-    return task_manager.submit("install", f"Установка «{instance.name}»", run)
+    return task_manager.submit("install", f"Установка «{instance.display_name}»", run)
 
 
 @router.get("/instances/", response_model=list[InstanceResponse])
@@ -119,7 +132,8 @@ def list_instances():
 
 @router.post("/instances/", response_model=InstanceResponse, status_code=status.HTTP_201_CREATED)
 def create_instance(data: InstanceCreate):
-    instance = InstanceManager.create(data.name, data.version, data.mod_loader, data.loader_version)
+    instance = InstanceManager.create(data.name, data.version, data.mod_loader, data.loader_version,
+                                      title=data.title)
     if data.install:
         _prepare_task(instance)
     return to_response(instance)
@@ -176,6 +190,23 @@ def rename_instance(name: str, request: NameRequest):
              status_code=status.HTTP_201_CREATED)
 def duplicate_instance(name: str, request: NameRequest):
     return to_response(InstanceManager.duplicate(name, request.new_name))
+
+
+class BackgroundRequest(BaseModel):
+    path: str = Field(..., description="Путь к локальной картинке")
+
+
+@router.put("/instances/{name}/background", response_model=InstanceResponse)
+def put_background(name: str, request: BackgroundRequest):
+    """Своё фото на фон сборки."""
+    set_background(name, Path(request.path))
+    return to_response(InstanceManager.get(name))
+
+
+@router.delete("/instances/{name}/background", response_model=InstanceResponse)
+def delete_background(name: str):
+    clear_background(name)
+    return to_response(InstanceManager.get(name))
 
 
 @router.post("/instances/{name}/prepare", response_model=TaskResponse, status_code=status.HTTP_202_ACCEPTED)

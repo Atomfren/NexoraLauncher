@@ -292,6 +292,13 @@ Item {
                 }
                 NxButton { variant: "ghost"; iconName: "terminal"; text: I18n.t("q.console"); onClicked: consoleDrawer.open() }
                 NxButton { variant: "ghost"; iconName: "archive"; text: I18n.t("q.backups"); onClicked: { Network.loadBackups(); backupsDrawer.open() } }
+                NxButton { variant: "ghost"; iconName: "sliders"; text: I18n.t("q.server_settings"); onClicked: { Network.loadProps(); propsDrawer.open() } }
+                NxButton {
+                    variant: "ghost"
+                    iconName: "package"
+                    text: page.own.core === "fabric" ? I18n.t("q.server_mods") : I18n.t("q.server_plugins")
+                    onClicked: { Network.loadMods(); modsDrawer.open() }
+                }
                 NxIconButton { iconName: "plus"; tip: I18n.t("q.create_server"); onClicked: createDialog.open() }
             }
         }
@@ -396,6 +403,148 @@ Item {
             iconName: "archive"
             text: I18n.t("q.backup_now")
             onClicked: Network.createBackup()
+        }
+    }
+
+    // --- Настройки сервера (server.properties) ---
+    NxDrawer {
+        id: propsDrawer
+        title: I18n.t("q.server_settings")
+        subtitle: page.own.name || ""
+        NxText {
+            width: propsDrawer.bodyWidth
+            text: I18n.t("q.server_settings_hint")
+            muted: true
+            font.pixelSize: 12
+            lineHeight: 16
+            wrapMode: Text.Wrap
+            elide: Text.ElideNone
+        }
+        NxSettingGroup {
+            width: propsDrawer.bodyWidth
+            Repeater {
+                model: Network.props
+                delegate: NxSettingRow {
+                    id: prop
+                    required property var modelData
+                    required property int index
+                    first: index === 0
+                    label: modelData.label
+                    hint: modelData.hint
+                    // Создаётся только нужный элемент: невидимые расширяли бы строку
+                    Loader {
+                        sourceComponent: prop.modelData.kind === "bool" ? toggleField
+                            : prop.modelData.options.length ? choiceField : textField
+                    }
+                    Component {
+                        id: toggleField
+                        NxToggle {
+                            checked: prop.modelData.checked
+                            onToggled: Network.setProp(prop.modelData.key, checked)
+                        }
+                    }
+                    Component {
+                        id: choiceField
+                        NxDropdown {
+                            width: 150
+                            model: prop.modelData.options
+                            value: prop.modelData.value
+                            alignRight: true
+                            onActivated: v => Network.setProp(prop.modelData.key, v)
+                        }
+                    }
+                    Component {
+                        id: textField
+                        NxTextField {
+                            width: prop.modelData.kind === "number" ? 80 : 200
+                            mono: prop.modelData.kind === "number"
+                            text: prop.modelData.value
+                            onAccepted: Network.setProp(prop.modelData.key, text)
+                            input.onEditingFinished: if (text !== prop.modelData.value) Network.setProp(prop.modelData.key, text)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Моды и плагины своего сервера ---
+    NxDrawer {
+        id: modsDrawer
+        title: page.own.core === "fabric" ? I18n.t("q.server_mods") : I18n.t("q.server_plugins")
+        subtitle: page.own.name || ""
+        NxText {
+            visible: page.own.core === "vanilla"
+            width: modsDrawer.bodyWidth
+            text: I18n.t("q.server_mods_vanilla")
+            muted: true
+            wrapMode: Text.Wrap
+            elide: Text.ElideNone
+        }
+        NxSpinner { visible: Network.modsLoading && Network.mods.length === 0 }
+        NxText {
+            visible: page.own.core !== "vanilla" && !Network.modsLoading && Network.mods.length === 0
+            width: modsDrawer.bodyWidth
+            text: I18n.t("q.server_mods_empty")
+            muted: true
+        }
+        NxText {
+            visible: Network.mods.length > 0 && (page.running || page.starting)
+            width: modsDrawer.bodyWidth
+            text: I18n.t("q.stop_to_remove")
+            muted: true
+            font.pixelSize: 12
+            lineHeight: 16
+            wrapMode: Text.Wrap
+            elide: Text.ElideNone
+        }
+        Repeater {
+            model: Network.mods
+            delegate: Rectangle {
+                id: md
+                required property var modelData
+                width: modsDrawer.bodyWidth
+                height: 52
+                radius: NxTheme.rButton
+                color: mh.hovered ? NxTheme.fill1 : "transparent"
+                HoverHandler { id: mh }
+                Column {
+                    x: 8
+                    width: parent.width - 60
+                    anchors.verticalCenter: parent.verticalCenter
+                    NxText { width: parent.width; text: md.modelData.name; variant: "strong"; color: md.modelData.enabled ? NxTheme.text : NxTheme.muted }
+                    NxText {
+                        width: parent.width
+                        text: [md.modelData.version, md.modelData.size, md.modelData.tunnel ? I18n.t("q.tunnel_mod") : ""].filter(x => x).join(" · ")
+                        muted: true
+                        font.pixelSize: 12
+                        lineHeight: 16
+                    }
+                }
+                NxIconButton {
+                    anchors.right: parent.right
+                    anchors.rightMargin: 8
+                    anchors.verticalCenter: parent.verticalCenter
+                    small: true
+                    iconName: "trash"
+                    tip: I18n.t("q.remove")
+                    enabled: !page.running && !page.starting
+                    onClicked: Network.removeMod(md.modelData.filename)
+                }
+            }
+        }
+        footer: NxButton {
+            x: 24; y: 16
+            width: parent.width - 48
+            iconName: "compass"
+            text: I18n.t("q.find_in_catalog")
+            enabled: page.own.core !== "vanilla"
+            onClicked: {
+                const target = page.own.name
+                modsDrawer.close()
+                Shell.navigate("catalog", "plugin")
+                Catalog.setFilter("target", target)
+            }
         }
     }
 

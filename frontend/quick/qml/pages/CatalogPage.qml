@@ -39,6 +39,16 @@ Item {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             spacing: 12
+            // Источник модпаков: Modrinth или сборки FTB / CurseForge (All The Mods)
+            NxSegmentedControl {
+                objectName: "packSource"
+                visible: Catalog.type === "modpack"
+                anchors.verticalCenter: parent.verticalCenter
+                value: Catalog.source
+                model: [{ value: "modrinth", label: "Modrinth" }, { value: "ftb", label: "FTB" },
+                        { value: "curseforge", label: "CurseForge" }]
+                onActivated: v => Catalog.setSource(v)
+            }
             NxTextField {
                 id: search
                 width: page.narrow ? 200 : 280
@@ -104,7 +114,18 @@ Item {
                     }
                 }
             }
+            NxText {
+                visible: Catalog.type === "modpack" && Catalog.source !== "modrinth"
+                width: parent.width
+                text: Catalog.source === "ftb" ? I18n.t("q.ftb_hint") : I18n.t("q.cf_hint")
+                muted: true
+                font.pixelSize: 12
+                lineHeight: 16
+                wrapMode: Text.Wrap
+                elide: Text.ElideNone
+            }
             Column {
+                visible: !(Catalog.type === "modpack" && Catalog.source !== "modrinth")
                 width: parent.width
                 spacing: 2
                 NxText { text: I18n.t("q.categories"); variant: "caption"; bottomPadding: 6 }
@@ -147,6 +168,7 @@ Item {
                 muted: true
             }
             NxDropdown {
+                visible: !(Catalog.type === "modpack" && Catalog.source !== "modrinth")
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 alignRight: true
@@ -317,7 +339,7 @@ Item {
             text: st === "busy" ? I18n.tf("q.installing_pct", { pct: Math.round(drawer.p.progress || 0) })
                 : st === "installed" ? I18n.t("q.installed_short")
                 : Catalog.type === "modpack" ? I18n.t("q.install_as_build")
-                : I18n.tf("q.install_into_name", { name: Catalog.target })
+                : I18n.tf("q.install_into_name", { name: Library.titleOf(Catalog.target) })
             onClicked: Catalog.install(drawer.p.id)
         }
     }

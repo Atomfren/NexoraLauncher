@@ -18,6 +18,7 @@ from shared.fsutil import (
     atomic_write_json,
     dir_size,
     read_json,
+    remove_tree,
     safe_extract_zip,
     safe_join,
     sanitize_name,
@@ -310,7 +311,7 @@ class ContentManager:
         path = ContentManager._world_path(instance, world)
         if not (path / "level.dat").exists():
             raise NotFoundError(f"Мир '{world}' не найден")
-        shutil.rmtree(path)
+        remove_tree(path)
 
     @staticmethod
     def export_world(instance_name: str, world: str, dest: Path) -> Path:

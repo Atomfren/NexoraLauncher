@@ -14,6 +14,7 @@ from backend.api.v1 import (
     minecraft,
     modpacks,
     optifine,
+    packs,
     servers,
     settings,
     smart,
@@ -29,6 +30,7 @@ router.include_router(minecraft.router, tags=["minecraft"])
 router.include_router(content.router, tags=["content"])
 router.include_router(smart.router, tags=["smart"])
 router.include_router(modpacks.router, tags=["modpacks"])
+router.include_router(packs.router, tags=["packs"])
 router.include_router(optifine.router, tags=["optifine"])
 router.include_router(auth.router, tags=["auth"])
 router.include_router(settings.router, tags=["settings"])

@@ -41,30 +41,38 @@ Window {
     Shortcut { sequence: "Ctrl+N"; onActivated: Shell.navigate("wizard") }
     Shortcut { sequence: "F5"; onActivated: { Library.refresh(); Build.reload() } }
 
-    RowLayout {
+    // Боковая панель слева/справа (вертикальная) или сверху/снизу (горизонтальная полоса).
+    // Контент привязан к ней якорями: ширина анимируется, и соседняя колонка двигается вместе с ней.
+    Item {
+        id: frame
         anchors.fill: parent
-        spacing: 0
+        readonly property string side: Shell.sidebarPosition
+        readonly property bool vertical: side === "left" || side === "right"
 
         NxSidebar {
-            Layout.fillHeight: true
+            id: sidebar
+            objectName: "sidebar"
+            z: 1
+            horizontal: !frame.vertical
+            x: frame.side === "right" ? frame.width - width : 0
+            y: frame.side === "top" ? topBar.height : frame.side === "bottom" ? frame.height - height : 0
+            width: frame.vertical ? implicitWidth : frame.width
+            height: frame.vertical ? frame.height : implicitHeight
             page: Shell.page
             wide: Shell.sidebarWide
             onNavigate: page => Shell.navigate(page)
             onToggleWide: Shell.toggleSidebar()
-            onAccountClicked: anchor => {
-                const p = anchor.mapToItem(accountPop.parent, 0, 0)
-                accountPop.x = p.x
-                accountPop.y = p.y - accountPop.implicitHeight - 8
-                accountPop.open()
-            }
         }
 
         ColumnLayout {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
+            objectName: "content"
+            x: frame.side === "left" ? sidebar.width : 0
+            width: frame.width - (frame.vertical ? sidebar.width : 0)
+            height: frame.height
             spacing: 0
 
             NxTopBar {
+                id: topBar
                 Layout.fillWidth: true
                 window: win
                 onPaletteRequested: palette.open()
@@ -75,6 +83,8 @@ Window {
                     downloads.open()
                 }
             }
+            // Место под горизонтальную полосу сверху
+            Item { Layout.preferredHeight: frame.side === "top" ? sidebar.height : 0; Layout.fillWidth: true }
 
             StackLayout {
                 Layout.fillWidth: true
@@ -87,6 +97,7 @@ Window {
                 NetworkPage {}
                 SettingsPage {}
             }
+            Item { Layout.preferredHeight: frame.side === "bottom" ? sidebar.height : 0; Layout.fillWidth: true }
         }
     }
 
@@ -132,11 +143,11 @@ Window {
         function buildItems() {
             const out = []
             for (const b of Library.entries())
-                out.push({ group: I18n.t("q.palette_builds"), icon: "library", text: b.name, hint: b.version, action: "select", arg: b.name })
+                out.push({ group: I18n.t("q.palette_builds"), icon: "library", text: b.title, hint: b.version, action: "select", arg: b.name })
             const cur = Library.current
             out.push({ group: I18n.t("q.palette_actions"), icon: "plus", text: I18n.t("q.new_build"), hint: "Ctrl N", action: "nav", arg: "wizard" })
             if (cur.name)
-                out.push({ group: I18n.t("q.palette_actions"), icon: "play", text: I18n.tf("q.palette_play", { name: cur.name }), action: "play", arg: cur.name })
+                out.push({ group: I18n.t("q.palette_actions"), icon: "play", text: I18n.tf("q.palette_play", { name: cur.title }), action: "play", arg: cur.name })
             out.push({ group: I18n.t("q.palette_actions"), icon: "compass", text: I18n.t("q.palette_catalog"), action: "nav", arg: "catalog" })
             out.push({ group: I18n.t("q.palette_actions"), icon: "package", text: I18n.t("q.palette_packs"), action: "catalog", arg: "modpack" })
             out.push({ group: I18n.t("q.palette_actions"), icon: "download", text: I18n.t("q.check_updates_app"), action: "updates", arg: "" })

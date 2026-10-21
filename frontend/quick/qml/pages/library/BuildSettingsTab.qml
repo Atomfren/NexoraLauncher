@@ -1,5 +1,6 @@
 // Настройки сборки: имя, версия, память, Java, аргументы, окно
 import QtQuick
+import QtQuick.Dialogs
 import Nexora
 
 TabPage {
@@ -22,9 +23,9 @@ TabPage {
             NxTextField {
                 id: nameField
                 width: 260
-                text: root.cur.name || ""
+                text: root.cur.title || ""
                 onAccepted: Library.rename(root.cur.name, text)
-                input.onEditingFinished: if (text.trim() && text.trim() !== root.cur.name) Library.rename(root.cur.name, text)
+                input.onEditingFinished: if (text.trim() && text.trim() !== root.cur.title) Library.rename(root.cur.name, text)
             }
         }
         NxSettingRow {
@@ -111,6 +112,27 @@ TabPage {
             label: I18n.t("q.fullscreen")
             NxToggle { checked: !!root.cur.fullscreen; onToggled: root.save({ fullscreen: checked }) }
         }
+        NxSettingRow {
+            label: I18n.t("q.background")
+            hint: root.cur.customBackground ? I18n.t("q.background_custom") : I18n.t("q.background_auto")
+            Row {
+                spacing: 8
+                NxButton { small: true; variant: "ghost"; iconName: "image"; text: I18n.t("q.background_pick"); onClicked: bgDialog.open() }
+                NxButton {
+                    visible: !!root.cur.customBackground
+                    small: true; variant: "ghost"; iconName: "x"
+                    text: I18n.t("q.background_reset")
+                    onClicked: Library.clearBackground(root.cur.name)
+                }
+            }
+        }
+    }
+
+    FileDialog {
+        id: bgDialog
+        fileMode: FileDialog.OpenFile
+        nameFilters: [I18n.t("q.images") + " (*.png *.jpg *.jpeg *.bmp *.webp *.gif)"]
+        onAccepted: Library.setBackground(root.cur.name, selectedFile.toString())
     }
 
     // Точки восстановления

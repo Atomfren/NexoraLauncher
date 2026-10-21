@@ -1,6 +1,6 @@
 [project]
 name = "nexoralauncher"
-version = "1.4.0"
+version = "1.5.0"
 description = "NexoraLauncher — Minecraft launcher (FastAPI backend + PyQt6 GUI)"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }

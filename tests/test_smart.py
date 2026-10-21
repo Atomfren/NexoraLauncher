@@ -277,3 +277,31 @@ def test_export_mrpack(client, modrinth, wait_task, tmp_path):
     assert "overrides/mods/private.jar" in names and "overrides/options.txt" in names
     assert not any("off.jar" in n for n in names)
     assert Path(dest).stat().st_size > 0
+
+
+def test_turbo_retries_network_errors(client, modrinth, wait_task, monkeypatch):
+    """Сбой сети не теряет мод молча: повтор, а если не вышло — мод в списке failed."""
+    from backend.core import updates
+    from backend.core.content import ContentManager
+    from backend.core.errors import ExternalServiceError
+    monkeypatch.setattr(updates.time, "sleep", lambda s: None)
+    monkeypatch.setattr(updates, "TURBO_MODS", [("lithium", ("fabric",)), ("krypton", ("fabric",))])
+    make_instance(client)
+    for slug in ("lithium", "krypton"):
+        modrinth.add_project(slug, slug.title(), f"{slug}.jar")
+    real_install, calls = ContentManager.install, {"lithium": 0}
+
+    def flaky(name, kind, project_id, **kw):
+        if project_id == "lithium":
+            calls["lithium"] += 1
+            if calls["lithium"] == 1:
+                raise ExternalServiceError("timeout")  # первый раз сеть падает, второй — проходит
+        if project_id == "krypton":
+            raise ExternalServiceError("timeout")  # не скачивается совсем
+        return real_install(name, kind, project_id, **kw)
+
+    monkeypatch.setattr(ContentManager, "install", staticmethod(flaky))
+    task = wait_task(client.post("/api/v1/instances/Pack/turbo", json={"tune_jvm": False}).json()["id"])
+    assert task["status"] == "done", task["error"]
+    assert task["result"]["installed"] == ["Lithium"] and task["result"]["failed"] == ["krypton"]
+    assert calls["lithium"] == 2

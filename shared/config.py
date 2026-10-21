@@ -35,9 +35,11 @@ class AppConfig:
     fullscreen: bool = False
     # ID приложения Azure для входа через Microsoft (не секрет)
     ms_client_id: str = ""
+    # Ключ API CurseForge (запасной путь для сборок CurseForge), зашифрован TokenVault
+    curseforge_key_enc: str = ""
     last_instance: str = ""
     # Скрывать лаунчер после запуска игры
-    hide_on_launch: bool = False
+    hide_on_launch: bool = True
     # Проверять обновления лаунчера при запуске
     check_updates: bool = True
     schema_version: int = SCHEMA_VERSION

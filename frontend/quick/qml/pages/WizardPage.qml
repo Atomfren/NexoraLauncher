@@ -251,7 +251,14 @@ Item {
                 visible: page.step === 2 && page.kind === "pack"
                 width: Math.min(content.width, 640)
                 spacing: 8
+                NxSegmentedControl {
+                    value: Wizard.packSource
+                    model: [{ value: "modrinth", label: "Modrinth" }, { value: "ftb", label: "FTB" },
+                            { value: "curseforge", label: "CurseForge" }]
+                    onActivated: v => Wizard.setPackSource(v, packSearch.text)
+                }
                 NxTextField {
+                    id: packSearch
                     width: parent.width
                     iconName: "search"
                     placeholder: I18n.t("q.find_pack")

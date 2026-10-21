@@ -25,6 +25,7 @@ from backend.core.errors import BadRequestError, ExternalServiceError, NotFoundE
 from backend.core.instance import Instance, InstanceManager
 from backend.core.process_manager import process_manager
 from shared.fsutil import UnsafePathError, safe_join, validate_name
+from shared.i18n import t
 from shared.version import USER_AGENT
 
 MCLOGS_API = "https://api.mclo.gs/1/log"
@@ -80,40 +81,27 @@ _SERVICE_NOISE = re.compile(
     r"Failed to verify authentication|Failed to fetch (?:the )?(?:player )?(?:profile|textures|skin)|"
     r"Failed to load Realms|Realms is not available")
 
-# Пояснения к частым ошибкам — простым языком
-_HINTS: list[tuple[re.Pattern[str], str]] = [(re.compile(p, re.I), h) for p, h in (
-    (r"OutOfMemoryError", "Игре не хватило памяти. Увеличьте выделенную память в настройках инстанса."),
-    (r"Mixin apply .* failed|MixinApplyError|InvalidInjectionException|MixinTransformerError",
-     "Мод не смог встроиться в игру — обычно он не подходит к этой версии игры или конфликтует с другим модом."),
-    (r"NoClassDefFoundError|ClassNotFoundException",
-     "Не найден класс — не хватает мода-зависимости или мод собран для другой версии игры/загрузчика."),
-    (r"NoSuchMethodError|NoSuchFieldError|AbstractMethodError|IncompatibleClassChangeError",
-     "Мод собран для другой версии игры или зависимости. Обновите мод или зависимость."),
-    (r"UnsupportedClassVersionError|class file version",
-     "Мод требует более новую Java. Используйте Java от Mojang (автоматически) или обновите мод."),
-    (r"GLFW error|OpenGL|Pixel format not accelerated|WGL_ARB",
-     "Проблема с видеодрайвером. Обновите драйвер видеокарты; на ноутбуке запускайте на дискретной видеокарте."),
-    (r"Couldn't connect to server|Connection refused|ConnectException",
-     "Не удалось подключиться к серверу: он выключен, адрес неверный или версия игры не совпадает."),
-    (r"timed out|UnknownHostException|Network is unreachable",
-     "Проблема с сетью: нет интернета, мешает прокси/VPN или сервер не отвечает."),
-    (r"Invalid session|Failed to login|Not authenticated",
-     "Сервер не принял вход: перезайдите в аккаунт Microsoft или используйте сервер без проверки лицензии."),
-    (r"Can't keep up! Is the server overloaded",
-     "Сервер не успевает обрабатывать мир: мало памяти или процессор перегружен (много мобов, механизмов)."),
-    (r"ZipException|zip END header|invalid LOC header|Failed to read .*\.jar",
-     "Файл мода повреждён — скачайте его заново."),
-    (r"Duplicate mod|DuplicateModsFoundException|Found duplicate mods",
-     "Один и тот же мод установлен дважды. Удалите лишнюю копию."),
-    (r"Failed to (?:load|parse) (?:texture|model|resource)|Unable to load model|Missing model",
-     "Не загрузилась текстура или модель — проблема ресурспака или мода, игра обычно продолжает работать."),
-    (r"Exception ticking world|Ticking (?:entity|block entity)",
-     "Ошибка при обработке мира (сущность или блок). Часто виноват мод, добавивший этот объект."),
+# Пояснения к частым ошибкам — простым языком. Хранятся ключи словаря (loghint.*):
+# текст берётся при разборе лога, на текущем языке интерфейса.
+_HINTS: list[tuple[re.Pattern[str], str]] = [(re.compile(p, re.I), key) for p, key in (
+    (r"OutOfMemoryError", "loghint.memory"),
+    (r"Mixin apply .* failed|MixinApplyError|InvalidInjectionException|MixinTransformerError", "loghint.mixin"),
+    (r"NoClassDefFoundError|ClassNotFoundException", "loghint.class_missing"),
+    (r"NoSuchMethodError|NoSuchFieldError|AbstractMethodError|IncompatibleClassChangeError", "loghint.method_missing"),
+    (r"UnsupportedClassVersionError|class file version", "loghint.java_version"),
+    (r"GLFW error|OpenGL|Pixel format not accelerated|WGL_ARB", "loghint.gpu"),
+    (r"Couldn't connect to server|Connection refused|ConnectException", "loghint.connect"),
+    (r"timed out|UnknownHostException|Network is unreachable", "loghint.network"),
+    (r"Invalid session|Failed to login|Not authenticated", "loghint.login"),
+    (r"Can't keep up! Is the server overloaded", "loghint.overloaded"),
+    (r"ZipException|zip END header|invalid LOC header|Failed to read .*\.jar", "loghint.corrupt_jar"),
+    (r"Duplicate mod|DuplicateModsFoundException|Found duplicate mods", "loghint.duplicate"),
+    (r"Failed to (?:load|parse) (?:texture|model|resource)|Unable to load model|Missing model", "loghint.resource"),
+    (r"Exception ticking world|Ticking (?:entity|block entity)", "loghint.ticking"),
     (r"Failed to (?:load|save) (?:level|chunk|world)|Chunk file at .* is in the wrong location|RegionFile",
-     "Повреждены данные мира. Восстановите мир из резервной копии."),
-    (r"StackOverflowError", "Бесконечная рекурсия в коде — почти всегда ошибка мода."),
-    (r"Shader compilation failed|Failed to compile shader|shaderpack",
-     "Не скомпилировался шейдер: шейдерпак не подходит к версии Iris/OptiFine или к видеокарте."),
+     "loghint.world_corrupt"),
+    (r"StackOverflowError", "loghint.stack_overflow"),
+    (r"Shader compilation failed|Failed to compile shader|shaderpack", "loghint.shader"),
 )]
 
 # Мод в теге логгера и в сообщениях
@@ -315,7 +303,7 @@ def parse(text: str, mod_ids: set[str] | None = None) -> list[LogEntry]:
             entry.mod = _guess_mod(entry, mod_ids)
             if not entry.noise and entry.level in ("ERROR", "WARN"):
                 blob = "\n".join([entry.message, *entry.extra[:8]])
-                entry.hint = next((h for pattern, h in _HINTS if pattern.search(blob)), "")
+                entry.hint = next((t(key) for pattern, key in _HINTS if pattern.search(blob)), "")
     return entries
 
 

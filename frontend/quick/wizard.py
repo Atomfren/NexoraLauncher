@@ -2,13 +2,14 @@
 
 from PyQt6.QtCore import QObject, pyqtProperty, pyqtSignal, pyqtSlot
 
+from backend.core.instance import folder_for_title
 from frontend.quick.bridge import Shell
 from frontend.quick.build import local_path
+from frontend.quick.catalog import PACK_SOURCES, split_pack_id
 from frontend.quick.library import Library
 from frontend.services.api_client import ApiClient
 from frontend.utils.logger import logger
 from frontend.utils.worker import run_async
-from shared.fsutil import UnsafePathError, validate_name
 from shared.i18n import t
 
 SOURCE_TITLES = {"prism": "Prism Launcher", "multimc": "MultiMC", "curseforge": "CurseForge"}
@@ -21,10 +22,6 @@ def name_error(name: str, existing: set[str]) -> str:
         return t("q.name_required")
     if len(name) > 64:
         return t("q.name_too_long")
-    try:
-        validate_name(name)
-    except UnsafePathError:
-        return t("q.name_bad_chars")
     if name.lower() in {n.lower() for n in existing}:
         return t("q.name_taken")
     return ""
@@ -54,6 +51,7 @@ class Wizard(QObject):
         self._packs: list[dict] = []
         self._packs_loading = False
         self._packs_gen = 0
+        self._pack_source = "modrinth"
 
     # --- Версии Minecraft ----------------------------------------------------------------------
     @pyqtProperty("QVariantList", notify=versionsChanged)
@@ -175,6 +173,18 @@ class Wizard(QObject):
     def packsLoading(self) -> bool:
         return self._packs_loading
 
+    @pyqtProperty(str, notify=packsChanged)
+    def packSource(self) -> str:
+        """Откуда модпаки: modrinth, ftb или curseforge (All The Mods и др. через API FTB)."""
+        return self._pack_source
+
+    @pyqtSlot(str, str)
+    def setPackSource(self, source: str, query: str) -> None:
+        if source in PACK_SOURCES and source != self._pack_source:
+            self._pack_source = source
+            self._packs = []
+            self.searchPacks(query)
+
     @pyqtSlot(str)
     def searchPacks(self, query: str) -> None:
         from frontend.quick.catalog import project_row
@@ -195,6 +205,10 @@ class Wizard(QObject):
                 self.packsChanged.emit()
                 self.shell.toast(message, "err")
 
+        source = self._pack_source
+        if source != "modrinth":
+            run_async(lambda: self.api.packs_search(source, query.strip()), done, failed, owner=self)
+            return
         run_async(lambda: self.api.search("modpack", query.strip(), index="relevance" if query.strip() else "downloads",
                                           limit=20), done, failed, owner=self)
 
@@ -206,7 +220,12 @@ class Wizard(QObject):
             self.library.refresh()
             self.library.select(name)
 
-        run_async(lambda: self.api.install_modpack(project_id),
+        external = split_pack_id(project_id)
+
+        def call() -> dict:
+            return self.api.install_pack(*external) if external else self.api.install_modpack(project_id)
+
+        run_async(call,
                   lambda task: self.shell.tracker.track(task, finished, lambda msg: self.shell.toast(msg, "err")),
                   lambda msg: self.shell.toast(msg, "err"), owner=self)
         self.created.emit("")
@@ -214,11 +233,14 @@ class Wizard(QObject):
     # --- Создание --------------------------------------------------------------------------------
     @pyqtSlot(str, result=str)
     def nameError(self, name: str) -> str:
-        return name_error(name, {e["name"] for e in self.library.entries()})
+        entries = self.library.entries()
+        return name_error(name, {e["name"] for e in entries} | {e["title"] for e in entries})
 
     @pyqtSlot(str, str, str, str)
     def create(self, name: str, version: str, loader: str, loader_version: str) -> None:
-        name = name.strip()
+        title = " ".join(name.split())
+        # Название может содержать «:» и другие символы, недопустимые в имени папки
+        name = folder_for_title(title, {e["name"] for e in self.library.entries()})
         self._set_busy(True)
 
         def done(_instance: dict) -> None:
@@ -232,7 +254,8 @@ class Wizard(QObject):
             self._set_busy(False)
             self.shell.toast(message, "err")
 
-        run_async(lambda: self.api.create_instance(name, version, loader, loader_version, install=False),
+        run_async(lambda: self.api.create_instance(name, version, loader, loader_version, install=False,
+                                                          title=title),
                   done, failed, owner=self)
 
     @pyqtSlot("QVariantList")

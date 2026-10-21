@@ -1,4 +1,4 @@
-"""Сеть: избранные серверы с пингом и свой сервер (старт/стоп, адрес, консоль, бэкапы)."""
+"""Сеть: избранные серверы с пингом и свой сервер (старт/стоп, адрес, консоль, бэкапы, настройки, моды)."""
 
 from typing import Any
 
@@ -49,6 +49,68 @@ def motd_spans(text: str) -> list[dict[str, Any]]:
     return spans
 
 
+# Настройки server.properties в окне «Настройки сервера»: ключ → вид поля
+PROPERTY_FIELDS: tuple[tuple[str, str], ...] = (
+    ("motd", "text"), ("max-players", "number"), ("gamemode", "gamemode"), ("difficulty", "difficulty"),
+    ("hardcore", "bool"), ("pvp", "bool"), ("allow-flight", "bool"), ("allow-nether", "bool"),
+    ("enable-command-block", "bool"), ("online-mode", "bool"), ("white-list", "bool"),
+    ("view-distance", "number"), ("simulation-distance", "number"), ("spawn-protection", "number"),
+    ("level-seed", "text"),
+)
+PROPERTY_CHOICES = {
+    "gamemode": ("survival", "creative", "adventure", "spectator"),
+    "difficulty": ("peaceful", "easy", "normal", "hard"),
+}
+PROPERTY_LABELS = {
+    "motd": "hosting.prop_motd", "max-players": "hosting.prop_max_players", "gamemode": "hosting.prop_gamemode",
+    "difficulty": "hosting.prop_difficulty", "hardcore": "hosting.prop_hardcore", "pvp": "hosting.prop_pvp",
+    "allow-flight": "hosting.prop_allow_flight", "allow-nether": "q.prop_allow_nether",
+    "enable-command-block": "hosting.prop_enable_command_block", "online-mode": "hosting.prop_online_mode",
+    "white-list": "hosting.prop_white_list", "view-distance": "hosting.prop_view_distance",
+    "simulation-distance": "q.prop_simulation_distance", "spawn-protection": "q.prop_spawn_protection",
+    "level-seed": "hosting.prop_seed",
+}
+PROPERTY_HINTS = {"online-mode": "hosting.online_mode_hint", "level-seed": "hosting.seed_placeholder",
+                  "spawn-protection": "q.prop_spawn_protection_hint"}
+# Значения Minecraft, если ключа нет в server.properties
+MINECRAFT_DEFAULTS = {"allow-nether": "true", "enable-command-block": "false", "simulation-distance": "10",
+                      "spawn-protection": "16", "view-distance": "10", "max-players": "20"}
+NUMBER_LIMITS = {"max-players": (1, 1000), "view-distance": (2, 32), "simulation-distance": (2, 32),
+                 "spawn-protection": (0, 1000)}
+
+
+def property_rows(values: dict[str, str]) -> list[dict[str, Any]]:
+    """Строки формы настроек сервера из server.properties."""
+    rows = []
+    for key, kind in PROPERTY_FIELDS:
+        value = values.get(key, MINECRAFT_DEFAULTS.get(key, ""))
+        row: dict[str, Any] = {"key": key, "kind": kind, "label": t(PROPERTY_LABELS[key]),
+                               "hint": t(PROPERTY_HINTS[key]) if key in PROPERTY_HINTS else "",
+                               "value": value, "checked": value.lower() == "true", "options": []}
+        if kind in PROPERTY_CHOICES:
+            row["options"] = [{"value": v, "label": t(f"hosting.{kind}_{v}")} for v in PROPERTY_CHOICES[kind]]
+        rows.append(row)
+    return rows
+
+
+def normalize_property(key: str, value: Any) -> str | None:
+    """Значение для server.properties или None, если оно недопустимо."""
+    kind = dict(PROPERTY_FIELDS).get(key)
+    if kind is None:
+        return None
+    if kind == "bool":
+        return "true" if value in (True, "true", "True", 1) else "false"
+    text = " ".join(str(value).split())
+    if kind == "number":
+        if not text.lstrip("-").isdigit():
+            return None
+        low, high = NUMBER_LIMITS.get(key, (0, 100000))
+        return str(min(max(int(text), low), high))
+    if kind in PROPERTY_CHOICES:
+        return text if text in PROPERTY_CHOICES[kind] else None
+    return text[:200]
+
+
 def ping_kind(ms: int | None) -> str:
     if ms is None:
         return "off"
@@ -60,6 +122,8 @@ class Network(QObject):
     ownChanged = pyqtSignal()
     consoleChanged = pyqtSignal()
     backupsChanged = pyqtSignal()
+    propsChanged = pyqtSignal()
+    modsChanged = pyqtSignal()
 
     def __init__(self, api: ApiClient, shell: Shell, library: Library, parent: QObject | None = None):
         super().__init__(parent)
@@ -73,6 +137,9 @@ class Network(QObject):
         self._console: list[str] = []
         self._console_open = False
         self._backups: list[dict] = []
+        self._props: list[dict] = []
+        self._mods: list[dict] = []
+        self._mods_loading = False
         self._poll = QTimer(self, interval=_POLL_MS)
         self._poll.timeout.connect(self.refreshOwn)
         self._console_timer = QTimer(self, interval=_CONSOLE_MS)
@@ -102,6 +169,18 @@ class Network(QObject):
     @pyqtProperty("QVariantList", notify=backupsChanged)
     def backups(self) -> list[dict]:
         return self._backups
+
+    @pyqtProperty("QVariantList", notify=propsChanged)
+    def props(self) -> list[dict]:
+        return self._props
+
+    @pyqtProperty("QVariantList", notify=modsChanged)
+    def mods(self) -> list[dict]:
+        return self._mods
+
+    @pyqtProperty(bool, notify=modsChanged)
+    def modsLoading(self) -> bool:
+        return self._mods_loading
 
     # --- Запуск раздела -------------------------------------------------------------------------
     @pyqtSlot()
@@ -317,4 +396,72 @@ class Network(QObject):
                                          lambda msg: self.shell.toast(msg, "err"))
 
         run_async(lambda: self.api.restore_server_backup(name, filename), started,
+                  lambda msg: self.shell.toast(msg, "err"), owner=self)
+
+    # --- Настройки сервера (server.properties) -----------------------------------------------------
+    @pyqtSlot()
+    def loadProps(self) -> None:
+        name = self._own_name()
+        if not name:
+            return
+
+        def done(values: dict) -> None:
+            self._props = property_rows(values)
+            self.propsChanged.emit()
+
+        run_async(lambda: self.api.server_properties(name), done, lambda msg: self.shell.toast(msg, "err"), owner=self)
+
+    @pyqtSlot(str, "QVariant")
+    def setProp(self, key: str, value: Any) -> None:
+        name = self._own_name()
+        normalized = normalize_property(key, value)
+        current = next((r for r in self._props if r["key"] == key), None)
+        if not name or normalized is None or (current and current["value"] == normalized):
+            if normalized is None:
+                self.loadProps()  # вернуть прежнее значение в поле
+            return
+
+        def done(values: dict) -> None:
+            self._props = property_rows(values)
+            self.propsChanged.emit()
+            restart = self.own.get("state") in ("running", "starting")
+            self.shell.toast(t("q.server_saved_restart") if restart else t("q.saved"))
+
+        run_async(lambda: self.api.update_server_properties(name, {key: normalized}), done,
+                  lambda msg: self.shell.toast(msg, "err"), owner=self)
+
+    # --- Моды и плагины своего сервера ------------------------------------------------------------
+    @pyqtSlot()
+    def loadMods(self) -> None:
+        name = self._own_name()
+        if not name:
+            return
+        self._mods_loading = True
+        self.modsChanged.emit()
+
+        def done(items: list[dict]) -> None:
+            self._mods = [{"filename": m["filename"], "name": m.get("name") or m["filename"],
+                           "version": m.get("version") or "", "size": fmt.size(m.get("size", 0)),
+                           "enabled": bool(m.get("enabled", True)), "tunnel": bool(m.get("tunnel"))}
+                          for m in items]
+            self._mods_loading = False
+            self.modsChanged.emit()
+
+        def failed(message: str) -> None:
+            self._mods_loading = False
+            self.modsChanged.emit()
+            self.shell.toast(message, "err")
+
+        run_async(lambda: self.api.server_mods(name), done, failed, owner=self)
+
+    @pyqtSlot(str)
+    def removeMod(self, filename: str) -> None:
+        name = self._own_name()
+        title = next((m["name"] for m in self._mods if m["filename"] == filename), filename)
+
+        def done(_r) -> None:
+            self.shell.toast(t("q.mod_removed", name=title))
+            self.loadMods()
+
+        run_async(lambda: self.api.remove_server_mod(name, filename), done,
                   lambda msg: self.shell.toast(msg, "err"), owner=self)

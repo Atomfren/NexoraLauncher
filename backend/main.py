@@ -44,6 +44,8 @@ async def lifespan(app: FastAPI):
     ensure_directories()
     _setup_logging()
     logger.info(f"{settings.app_name} v{settings.app_version} запущен")
+    from backend.core.instance import InstanceManager
+    InstanceManager.purge_leftovers()  # остатки прерванных удалений сборок
     yield
     from backend.core.hosting import HostingManager
     HostingManager.stop_all()  # серверы корректно сохраняют миры при выходе

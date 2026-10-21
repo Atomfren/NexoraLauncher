@@ -129,8 +129,10 @@ TabPage {
                                 }
                             }
                         }
-                        Row {
+                        // Flow: длинная подпись исправления переносит «Подробнее» на новую строку, а не за край
+                        Flow {
                             visible: root.v.state === "error" || root.v.state === "warning"
+                            width: parent.width
                             spacing: 8
                             NxButton {
                                 visible: !!root.v.fixAction

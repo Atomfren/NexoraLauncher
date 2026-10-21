@@ -186,7 +186,8 @@ def import_folder(folder: Path, new_name: str = "", task: Task | None = None,
         raise BadRequestError("Это не папка сборки Prism Launcher, MultiMC или CurseForge")
     name = new_name or InstanceManager.unique_name(sanitize_name(info.name))
     check_name(name)
-    instance = InstanceManager.create(name, info.version, info.mod_loader, info.loader_version)
+    instance = InstanceManager.create(name, info.version, info.mod_loader, info.loader_version,
+                                      title="" if new_name else info.name)
     try:
         if info.max_memory:
             instance = InstanceManager.update(name, max_memory=info.max_memory)
