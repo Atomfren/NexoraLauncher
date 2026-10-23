@@ -1,6 +1,6 @@
 """Обновление лаунчера: проверка, окно «Что нового», загрузка и перезапуск."""
 
-from PyQt6.QtWidgets import QApplication, QDialog, QHBoxLayout, QPlainTextEdit, QVBoxLayout
+from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QPlainTextEdit, QVBoxLayout
 
 from frontend.utils.worker import run_async
 from frontend.widgets import AppContext, button, confirm, format_size, label, open_url, show_error, show_info
@@ -52,7 +52,7 @@ class UpdateDialog(QDialog):
 
 
 def check_for_updates(ctx: AppContext, parent, silent: bool = False) -> None:
-    """Проверяет релизы на GitHub. ``silent`` — без сообщений, если обновлений нет или сеть недоступна."""
+    """Проверяет канал обновлений. ``silent`` — без сообщений, если обновлений нет или сеть недоступна."""
 
     def done(info: dict) -> None:
         if info["available"]:

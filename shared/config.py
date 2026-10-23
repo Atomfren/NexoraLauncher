@@ -9,6 +9,9 @@ from shared.paths import get_config_dir
 
 SCHEMA_VERSION = 2
 
+# Выбор видеокарты для игры (подробнее — backend/core/gpu.py)
+GPU_CHOICES = ("auto", "discrete", "integrated", "system")
+
 # Устаревшие ключи схемы v1, которые больше не используются
 _LEGACY_KEYS = {"_ms_client_id", "_ms_refresh_token", "_curseforge_api_key", "color_theme",
                 "window_width", "window_height", "jvm_profile", "last_username", "last_version"}
@@ -40,18 +43,24 @@ class AppConfig:
     last_instance: str = ""
     # Скрывать лаунчер после запуска игры
     hide_on_launch: bool = True
+    # Видеокарта для игры: auto (дискретная, если есть), discrete, integrated, system (не вмешиваться)
+    gpu_preference: str = "auto"
     # Проверять обновления лаунчера при запуске
     check_updates: bool = True
     schema_version: int = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         """Нормализует значения."""
-        self.language = self.language if self.language in ("ru", "en") else "ru"
+        # Язык может быть докачанным — список знает i18n, а не конфигурация
+        from shared.i18n import available_languages
+        self.language = self.language if self.language in available_languages() else "ru"
         self.appearance_mode = self.appearance_mode if self.appearance_mode in ("dark", "light") else "dark"
         self.max_memory = max(512, min(65536, int(self.max_memory)))
         self.min_memory = max(256, min(self.max_memory, int(self.min_memory)))
         self.game_width = max(320, min(7680, int(self.game_width)))
         self.game_height = max(240, min(4320, int(self.game_height)))
+        if self.gpu_preference not in GPU_CHOICES:
+            self.gpu_preference = "auto"
         self.java_path = (self.java_path or "").strip()
         self.jvm_args = (self.jvm_args or "").strip()
         self.ms_client_id = (self.ms_client_id or "").strip()

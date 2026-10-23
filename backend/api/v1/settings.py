@@ -1,7 +1,7 @@
 """Settings API."""
 
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
 from backend.core.java_detector import find_java_installations
@@ -26,11 +26,13 @@ class SettingsResponse(BaseModel):
     last_instance: str
     hide_on_launch: bool
     check_updates: bool
+    gpu_preference: str
     curseforge_key_set: bool = False
 
 
 class SettingsUpdate(BaseModel):
-    language: str | None = Field(None, pattern="^(ru|en)$")
+    # Код языка: встроенный или докачанный с сайта (список проверяется в обработчике)
+    language: str | None = Field(None, pattern="^[a-z]{2}(-[a-z]{2,8})?$")
     appearance_mode: str | None = Field(None, pattern="^(dark|light)$")
     java_path: str | None = None
     max_memory: int | None = Field(None, ge=512, le=65536)
@@ -43,6 +45,7 @@ class SettingsUpdate(BaseModel):
     last_instance: str | None = None
     hide_on_launch: bool | None = None
     check_updates: bool | None = None
+    gpu_preference: str | None = Field(None, pattern="^(auto|discrete|integrated|system)$")
     # Ключ передаётся только на запись; хранится зашифрованным, наружу не отдаётся
     curseforge_api_key: str | None = Field(None, max_length=200)
 
@@ -63,6 +66,20 @@ class SystemInfo(BaseModel):
     logs_dir: str
 
 
+class AdapterInfo(BaseModel):
+    name: str
+    discrete: bool
+
+
+class GpuInfo(BaseModel):
+    """Видеокарты системы и выбор для игры."""
+
+    supported: bool
+    preference: str
+    adapters: list[AdapterInfo]
+    discrete_name: str
+
+
 def _public(config: AppConfig) -> dict:
     data = config.to_dict()
     data["curseforge_key_set"] = bool(data.pop("curseforge_key_enc", ""))
@@ -77,6 +94,13 @@ def get_settings():
 @router.patch("/settings/", response_model=SettingsResponse)
 def update_settings(changes: SettingsUpdate):
     values = changes.model_dump(exclude_unset=True)
+    if "language" in values:
+        # Список языков меняется на ходу (их докачивают с сайта), поэтому проверяем здесь
+        from shared.i18n import available_languages
+
+        if values["language"] not in available_languages():
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                detail=f"Язык «{values['language']}» не установлен")
     if "curseforge_api_key" in values:
         from shared.crypto import TokenVault
         key = (values.pop("curseforge_api_key") or "").strip()
@@ -94,6 +118,14 @@ def get_system_info():
         instances_dir=str(get_instances_dir()), minecraft_dir=str(get_minecraft_dir()),
         logs_dir=str(get_logs_dir()),
     )
+
+
+@router.get("/settings/gpu", response_model=GpuInfo)
+def get_gpu_info():
+    """Видеокарты системы и текущий выбор. Список берётся у системы, поэтому отвечает не мгновенно."""
+    from backend.core import gpu
+
+    return gpu.state(AppConfig.load().gpu_preference).to_dict()
 
 
 @router.get("/settings/java/", response_model=list[JavaInfo])

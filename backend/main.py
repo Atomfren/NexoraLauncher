@@ -46,6 +46,8 @@ async def lifespan(app: FastAPI):
     logger.info(f"{settings.app_name} v{settings.app_version} запущен")
     from backend.core.instance import InstanceManager
     InstanceManager.purge_leftovers()  # остатки прерванных удалений сборок
+    from backend.core.languages import load_installed
+    load_installed()  # докачанные языки должны быть доступны до первого t()
     yield
     from backend.core.hosting import HostingManager
     HostingManager.stop_all()  # серверы корректно сохраняют миры при выходе
@@ -79,11 +81,17 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request: Request, exc: RequestValidationError):
-        messages = []
+        messages, details = [], []
         for err in exc.errors():
             location = ".".join(str(p) for p in err.get("loc", []) if p not in ("body", "query", "path"))
             messages.append(f"{location}: {err.get('msg')}" if location else err.get("msg", ""))
-        return JSONResponse(status_code=422, content={"detail": "; ".join(messages), "errors": exc.errors()})
+            # В ctx может лежать само исключение — в JSON оно не превращается, а ответ ронять нельзя
+            safe = dict(err)
+            if isinstance(safe.get("ctx"), dict):
+                safe["ctx"] = {key: str(value) for key, value in safe["ctx"].items()}
+            safe.pop("url", None)
+            details.append(safe)
+        return JSONResponse(status_code=422, content={"detail": "; ".join(messages), "errors": details})
 
     @app.exception_handler(Exception)
     async def unhandled_error_handler(request: Request, exc: Exception):

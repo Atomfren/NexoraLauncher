@@ -556,6 +556,25 @@ _RU: dict[str, str] = {
     "q.fixed": "Исправлено",
     "q.from_catalog": "Из каталога",
     "q.fullscreen": "Во весь экран",
+    "q.set_languages": "Языки",
+    "q.lang_current": "Язык интерфейса",
+    "q.lang_available": "Языки с сайта",
+    "q.lang_from_site": "Переводы сообщества с nexoralauncher.ru, подпись проверяется",
+    "q.lang_coverage": "переведено {done} из {total}",
+    "q.lang_download": "Скачать",
+    "q.lang_none": "Новых языков пока нет",
+    "q.lang_installed": "Язык «{name}» установлен",
+    "q.update_found_title": "Вышла новая версия",
+    "q.update_found_text": "Доступна версия {v}. Обновиться сейчас? Сборки, миры и настройки останутся на месте.",
+    "q.update_install": "Обновить",
+    "q.gpu": "Видеокарта для игры",
+    "q.gpu_looking": "Смотрим, какие видеокарты есть…",
+    "q.gpu_found": "Дискретная: {name}",
+    "q.gpu_single": "Видеокарта одна — выбирать нечего",
+    "q.gpu_auto": "Авто",
+    "q.gpu_discrete": "Дискретная",
+    "q.gpu_integrated": "Встроенная",
+    "q.gpu_system": "Как в Windows",
     "q.game_started": "«{name}» запущена",
     "q.import_other": "Перенести из другого лаунчера",
     "q.install": "Установить",
@@ -1556,6 +1575,25 @@ _EN: dict[str, str] = {
     "q.fixed": "Fixed",
     "q.from_catalog": "From catalog",
     "q.fullscreen": "Fullscreen",
+    "q.set_languages": "Languages",
+    "q.lang_current": "Interface language",
+    "q.lang_available": "Languages from the site",
+    "q.lang_from_site": "Community translations from nexoralauncher.ru, signature verified",
+    "q.lang_coverage": "{done} of {total} translated",
+    "q.lang_download": "Download",
+    "q.lang_none": "No new languages yet",
+    "q.lang_installed": "Language “{name}” installed",
+    "q.update_found_title": "A new version is out",
+    "q.update_found_text": "Version {v} is available. Update now? Your instances, worlds and settings stay as they are.",
+    "q.update_install": "Update",
+    "q.gpu": "Graphics card for the game",
+    "q.gpu_looking": "Checking which cards are available…",
+    "q.gpu_found": "Discrete: {name}",
+    "q.gpu_single": "Only one card — nothing to choose",
+    "q.gpu_auto": "Auto",
+    "q.gpu_discrete": "Discrete",
+    "q.gpu_integrated": "Integrated",
+    "q.gpu_system": "As in Windows",
     "q.game_started": "“{name}” started",
     "q.import_other": "Import from another launcher",
     "q.install": "Install",
@@ -2027,10 +2065,16 @@ _BUILTIN: dict[str, dict[str, str]] = {"ru": _RU, "en": _EN}
 _current_lang = "ru"
 
 
+BUILTIN_NAMES = {"ru": "Русский", "en": "English"}
+
+# Языки, докачанные с сайта: код → {"name", "version", "author", "strings"}
+_PACKS: dict[str, dict[str, Any]] = {}
+
+
 def set_language(lang: str) -> None:
-    """Устанавливает текущий язык."""
+    """Устанавливает текущий язык. Неизвестный код игнорируется."""
     global _current_lang
-    if lang in _BUILTIN:
+    if lang in _BUILTIN or lang in _PACKS:
         _current_lang = lang
 
 
@@ -2039,18 +2083,69 @@ def get_language() -> str:
 
 
 def available_languages() -> list[str]:
-    return list(_BUILTIN)
+    """Коды языков, на которые можно переключиться: встроенные и докачанные."""
+    return list(_BUILTIN) + [code for code in _PACKS if code not in _BUILTIN]
+
+
+def language_name(code: str) -> str:
+    """Название языка на нём самом."""
+    if code in _PACKS:
+        return str(_PACKS[code].get("name") or code)
+    return BUILTIN_NAMES.get(code, code)
 
 
 def t(key: str, **kwargs: Any) -> str:
-    """Перевод по ключу с подстановкой параметров."""
-    text = _BUILTIN.get(_current_lang, _RU).get(key) or _RU.get(key, key)
+    """Перевод по ключу с подстановкой параметров.
+
+    Порядок поиска: выбранный язык → английский → русский → сам ключ. Докачанный пакет
+    может быть переведён не полностью, и тогда недостающие строки берутся из английского,
+    а не остаются ключами вида ``q.play``.
+    """
+    pack = _PACKS.get(_current_lang)
+    if pack is not None:
+        # Докачанный язык: недостающее берём из английского, он ближе международной аудитории
+        text = pack["strings"].get(key) or _EN.get(key) or _RU.get(key, key)
+    else:
+        text = _BUILTIN.get(_current_lang, _RU).get(key) or _RU.get(key, key)
     if not kwargs:
         return text
     try:
         return text.format(**kwargs)
     except (KeyError, IndexError, ValueError):
         return text
+
+
+# --- Докачанные языковые пакеты ------------------------------------------------------------------
+def pack_keys() -> list[str]:
+    """Ключи, которые должен содержать полный перевод (эталон — английский)."""
+    return sorted(_EN)
+
+
+def add_pack(meta: dict[str, Any], strings: dict[str, str]) -> str:
+    """Подключает пакет в память. Возвращает код языка."""
+    code = str(meta.get("code") or "").strip().lower()
+    if not code or code in _BUILTIN:
+        raise ValueError(f"Недопустимый код языка: {code or '—'}")
+    clean = {str(k): str(v) for k, v in strings.items() if isinstance(v, str) and v}
+    _PACKS[code] = {"name": str(meta.get("name") or code), "version": str(meta.get("version") or ""),
+                    "author": str(meta.get("author") or ""), "strings": clean}
+    return code
+
+
+def drop_pack(code: str) -> None:
+    """Убирает пакет из памяти; если он был выбран — возвращаемся на русский."""
+    global _current_lang
+    _PACKS.pop(code, None)
+    if _current_lang == code:
+        _current_lang = "ru"
+
+
+def installed_packs() -> dict[str, dict[str, Any]]:
+    """Подключённые пакеты без самих строк — для интерфейса."""
+    total = len(_EN)
+    return {code: {"code": code, "name": pack["name"], "version": pack["version"],
+                   "author": pack["author"], "translated": len(pack["strings"]), "total": total}
+            for code, pack in _PACKS.items()}
 
 
 def load_external_lang(path: Path) -> None:

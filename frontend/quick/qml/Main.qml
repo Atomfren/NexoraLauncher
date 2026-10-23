@@ -136,6 +136,28 @@ Window {
     }
     AddAccountDialog { id: addAccount }
 
+    // Новая версия нашлась сама: при запуске или когда появился интернет
+    NxDialog {
+        id: updateOffer
+        objectName: "updateOffer"
+        property string version: ""
+        title: I18n.t("q.update_found_title")
+        text: I18n.tf("q.update_found_text", { v: version })
+        acceptText: I18n.t("q.update_install")
+        danger: false
+        onAccepted: {
+            Shell.navigate("settings", "updates")
+            if (Prefs.update.can_install) Prefs.installUpdate()
+        }
+    }
+    Connections {
+        target: Prefs
+        function onUpdateOffered(version) {
+            updateOffer.version = version
+            updateOffer.open()
+        }
+    }
+
     NxCommandPalette {
         id: palette
         objectName: "palette"

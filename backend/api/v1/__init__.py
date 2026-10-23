@@ -10,6 +10,7 @@ from backend.api.v1 import (
     health,
     hosting,
     instances,
+    languages,
     logs,
     minecraft,
     modpacks,
@@ -38,3 +39,4 @@ router.include_router(servers.router, tags=["servers"])
 router.include_router(hosting.router, tags=["hosting"])
 router.include_router(ai.router, tags=["ai"])
 router.include_router(app_update.router, tags=["app"])
+router.include_router(languages.router, tags=["languages"])

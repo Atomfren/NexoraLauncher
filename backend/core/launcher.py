@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from backend.core import gpu
 from backend.core.auth import AuthManager
 from backend.core.errors import ConflictError
 from backend.core.instance import InstanceManager
@@ -29,6 +30,9 @@ def launch_instance(name: str, server: str = "", port: int = 25565) -> Task:
         credentials = AuthManager.get_launch_credentials(config.ms_client_id)
         task.set_status("Запуск игры…")
         command = mc.build_command(instance, launch_id, credentials, config, server=server, port=port)
+        # Выбор видеокарты делается для конкретного java.exe и прямо перед запуском:
+        # у разных сборок Java разная, и выбор должен достаться именно той, что сейчас стартует
+        gpu.apply_preference(command[0], config.gpu_preference)
         mc.sync_game_options(instance, config)
         game = process_manager.start(instance, command, credentials["username"], launch_id)
         AppConfig.load().update(last_instance=instance.name)

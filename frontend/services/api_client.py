@@ -407,6 +407,21 @@ class ApiClient:
     def detect_java(self) -> list[dict]:
         return self.request("GET", "/settings/java/", timeout=120)
 
+    def gpu_info(self) -> dict:
+        """Видеокарты системы: список берётся у Windows, поэтому таймаут побольше."""
+        return self.request("GET", "/settings/gpu", timeout=60)
+
+    # --- Языки ----------------------------------------------------------------------------------
+    def languages(self, online: bool = True) -> dict:
+        """Языки: установленные всегда, доступные для загрузки — если ``online`` (ходит на сайт)."""
+        return self.request("GET", "/languages", params={"online": str(online).lower()}, timeout=60)
+
+    def install_language(self, code: str) -> dict:
+        return self.post(f"/languages/{_q(code)}/install")
+
+    def remove_language(self, code: str) -> dict:
+        return self.delete(f"/languages/{_q(code)}")
+
     # --- Серверы --------------------------------------------------------------------------------
     def servers(self) -> list[dict]:
         return self.get("/servers/")

@@ -9,6 +9,7 @@ Item {
     readonly property var v: Prefs.values
     readonly property var sections: [
         { value: "general", label: I18n.t("q.set_general") },
+        { value: "languages", label: I18n.t("q.set_languages") },
         { value: "game", label: I18n.t("q.set_game") },
         { value: "java", label: "Java" },
         { value: "accounts", label: I18n.t("q.set_accounts") },
@@ -23,6 +24,8 @@ Item {
     onSectionChanged: {
         if (section === "java" && Prefs.javas.length === 0) Prefs.detectJava()
         if (section === "updates" && Prefs.update.state === "idle") Prefs.checkUpdate()
+        if (section === "game") Prefs.loadGpu()
+        if (section === "languages") Prefs.loadLanguages()
     }
 
     Column {
@@ -76,7 +79,12 @@ Item {
                         width: 160
                         alignRight: true
                         value: page.v.language || "ru"
-                        model: [{ value: "ru", label: "Русский" }, { value: "en", label: "English" }]
+                        model: {
+                            var out = [{ value: "ru", label: "Русский" }, { value: "en", label: "English" }]
+                            var mine = Prefs.languages.installed || []
+                            for (var i = 0; i < mine.length; i++) out.push({ value: mine[i].code, label: mine[i].name })
+                            return out
+                        }
                         onActivated: val => Prefs.save({ language: val })
                     }
                 }
@@ -200,6 +208,22 @@ Item {
                     NxToggle { checked: !!page.v.fullscreen; onToggled: Prefs.save({ fullscreen: checked }) }
                 }
                 NxSettingRow {
+                    visible: !!Prefs.gpu.supported
+                    label: I18n.t("q.gpu")
+                    hint: Prefs.gpu.loading ? I18n.t("q.gpu_looking")
+                        : Prefs.gpu.discrete_name ? I18n.tf("q.gpu_found", { name: Prefs.gpu.discrete_name })
+                        : I18n.t("q.gpu_single")
+                    NxSegmentedControl {
+                        enabled: !!Prefs.gpu.discrete_name
+                        value: page.v.gpu_preference || "auto"
+                        model: [{ value: "auto", label: I18n.t("q.gpu_auto") },
+                                { value: "discrete", label: I18n.t("q.gpu_discrete") },
+                                { value: "integrated", label: I18n.t("q.gpu_integrated") },
+                                { value: "system", label: I18n.t("q.gpu_system") }]
+                        onActivated: val => Prefs.save({ gpu_preference: val })
+                    }
+                }
+                NxSettingRow {
                     label: I18n.t("q.jvm_args")
                     NxTextField {
                         width: 300; mono: true
@@ -207,6 +231,76 @@ Item {
                         placeholder: "-XX:+UseG1GC"
                         input.onEditingFinished: Prefs.save({ jvm_args: text.trim() })
                     }
+                }
+            }
+
+            // --- Языки ---
+            NxSettingGroup {
+                visible: page.section === "languages"
+                NxSettingRow {
+                    first: true
+                    label: I18n.t("q.lang_current")
+                    hint: I18n.t("q.restart_for_language")
+                    NxDropdown {
+                        width: 180
+                        alignRight: true
+                        value: page.v.language || "ru"
+                        model: {
+                            var out = [{ value: "ru", label: "Русский" }, { value: "en", label: "English" }]
+                            var mine = Prefs.languages.installed || []
+                            for (var i = 0; i < mine.length; i++) out.push({ value: mine[i].code, label: mine[i].name })
+                            return out
+                        }
+                        onActivated: val => Prefs.save({ language: val })
+                    }
+                }
+            }
+            NxSettingGroup {
+                visible: page.section === "languages"
+                NxSettingRow {
+                    first: true
+                    label: I18n.t("q.lang_available")
+                    hint: Prefs.languages.loading ? I18n.t("common.loading")
+                        : (Prefs.languages.error || I18n.t("q.lang_from_site"))
+                    NxButton {
+                        small: true
+                        variant: "ghost"
+                        iconName: "refresh"
+                        text: I18n.t("common.refresh")
+                        loading: !!Prefs.languages.loading
+                        onClicked: Prefs.loadLanguages()
+                    }
+                }
+                Repeater {
+                    model: Prefs.languages.available || []
+                    delegate: NxSettingRow {
+                        required property var modelData
+                        label: modelData.name + (modelData.version ? " · " + modelData.version : "")
+                        hint: I18n.tf("q.lang_coverage", { done: modelData.translated, total: modelData.total })
+                            + (modelData.author ? " · " + modelData.author : "")
+                        Row {
+                            spacing: 8
+                            NxButton {
+                                small: true
+                                visible: !modelData.installed || modelData.update_available
+                                loading: Prefs.languages.busy === modelData.code
+                                text: modelData.update_available ? I18n.t("q.update_install") : I18n.t("q.lang_download")
+                                onClicked: Prefs.installLanguage(modelData.code)
+                            }
+                            NxButton {
+                                small: true
+                                variant: "ghost"
+                                dangerText: true
+                                visible: modelData.installed
+                                text: I18n.t("common.delete")
+                                onClicked: Prefs.removeLanguage(modelData.code)
+                            }
+                        }
+                    }
+                }
+                NxSettingRow {
+                    visible: !Prefs.languages.loading && (Prefs.languages.available || []).length === 0
+                    label: I18n.t("q.lang_none")
                 }
             }
 
