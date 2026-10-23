@@ -42,13 +42,46 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements-dev.txt
-      - name: Inno Setup (установщик)
-        run: choco install innosetup -y --no-progress
-      - run: python scripts/build.py --installer
+      - run: python scripts/build.py
       - name: Self-test собранного приложения
         run: |
           $p = Start-Process -FilePath dist\NexoraLauncher\NexoraLauncher.exe -ArgumentList "--self-test" -Wait -PassThru
           if ($p.ExitCode -ne 0) { exit 1 }
+        shell: pwsh
+      # Собственный установщик на Rust (installer/rust) вместо Inno Setup; на CI — тулчейн MSVC
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+        shell: pwsh
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: installer/rust
+      - name: Тесты установщика
+        run: cargo test --release --locked
+        working-directory: installer/rust
+      - name: Установщик
+        run: |
+          $v = python -c "from shared.version import APP_VERSION; print(APP_VERSION)"
+          ./installer/rust/build.ps1 -Version $v
+          "VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        shell: pwsh
+      # Чистая машина CI: тихая установка, запуск установленного лаунчера, удаление
+      - name: Проверка установки и удаления
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP "nexora-app"
+          $p = Start-Process -FilePath "dist\NexoraLauncher-$env:VERSION-setup.exe" -ArgumentList "--silent", "--dir", $dir, "--no-desktop" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "установка: код $($p.ExitCode)" }
+          if (-not (Test-Path "$dir\uninstall.exe")) { throw "нет uninstall.exe" }
+          $p = Start-Process -FilePath "$dir\NexoraLauncher.exe" -ArgumentList "--self-test" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "self-test установленного лаунчера: код $($p.ExitCode)" }
+          # Деинсталлятор перезапускается из %TEMP% и работает уже после выхода — ждём результата
+          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\NexoraLauncher"
+          if (-not (Test-Path $key)) { throw "установка не записала себя в «Приложения»" }
+          Start-Process -FilePath "$dir\uninstall.exe" -ArgumentList "--silent" -Wait
+          for ($i = 0; $i -lt 90 -and ((Test-Path "$dir\NexoraLauncher.exe") -or (Test-Path $key)); $i++) { Start-Sleep -Seconds 1 }
+          if (Test-Path "$dir\NexoraLauncher.exe") { throw "удаление не убрало файлы" }
+          if (Test-Path $key) { throw "после удаления осталась запись в реестре" }
         shell: pwsh
       - uses: actions/upload-artifact@v4
         with:

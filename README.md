@@ -93,7 +93,7 @@ pip install -r requirements-dev.txt
 ruff check .                    # линтер
 pytest --cov                    # тесты (backend, shared, smoke-тест GUI)
 python scripts/build.py         # сборка dist/NexoraLauncher + zip
-python scripts/build.py --installer   # + установщик setup.exe (нужен Inno Setup 6)
+powershell -ExecutionPolicy Bypass -File installer/rust/build.ps1 -Version 1.5.0   # установщик setup.exe (нужен Rust)
 ```
 
 Структура проекта:
@@ -103,8 +103,8 @@ backend/        FastAPI: api/v1 (эндпоинты), core (бизнес-лог�
 frontend/       quick/ — интерфейс на QML (основной); app.py, pages/, dialogs/ — прежний (--ui classic)
 shared/         paths, config, crypto, i18n, fsutil, version
 tests/          pytest: API, установка/запуск (с заглушками), контент, i18n, GUI smoke
-scripts/        build.py (PyInstaller, Inno Setup), make_icon.py
-installer/      nexora.iss — установщик Windows
+scripts/        build.py (PyInstaller), make_icon.py
+installer/      rust/ — собственный установщик и деинсталлятор (Rust, egui); nexora.iss — прежний на Inno Setup
 resources/      иконки
 ```
 

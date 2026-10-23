@@ -30,3 +30,6 @@ shared/.vault_key
 
 # Граф кода graphify (пересобирается: graphify update .)
 graphify-out/
+
+# Установщик на Rust
+installer/rust/target/
