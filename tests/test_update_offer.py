@@ -120,6 +120,44 @@ def test_offer_is_shown_once(qt_app):
     assert offered == ["9.9.9"] and api.checks == 1, "повторно дёргать не нужно"
 
 
+def test_auto_check_does_not_block_the_window(qt_app):
+    """Запуск проверки обязан быть мгновенным: он выполняется в потоке интерфейса.
+
+    История: слежка за сетью через QNetworkInformation намертво вешала окно на Windows —
+    окно появлялось чёрным и помечалось «не отвечает» (2026-10-23).
+    """
+    api = FakeApi()
+    settings = make_settings(api)
+    started = time.perf_counter()
+    settings.start_auto_check()
+    spent = time.perf_counter() - started
+    assert spent < 0.2, f"start_auto_check задержал поток интерфейса на {spent:.2f} с"
+
+
+def test_no_network_information_backend():
+    """QNetworkInformation в коде интерфейса быть не должно — см. тест выше."""
+    from pathlib import Path
+
+    import frontend.quick.settings as module
+
+    source = Path(module.__file__).read_text(encoding="utf-8")
+    assert "QNetworkInformation" not in source.replace("QNetworkInformation``", "")
+
+
+def test_failed_check_is_retried_with_growing_delays(qt_app):
+    api = FakeApi()
+    api.offline_until = 99          # сети нет совсем
+    settings = make_settings(api)
+    settings.start_auto_check()
+
+    delays = []
+    for _ in range(5):
+        settings._schedule_retry()
+        delays.append(settings._retry.interval())
+        settings._retry.stop()
+    assert delays == [30_000, 120_000, 300_000, 900_000, 900_000], delays
+
+
 def test_disabled_in_settings_means_no_requests(qt_app):
     api = FakeApi(check_updates=False)
     settings = make_settings(api)

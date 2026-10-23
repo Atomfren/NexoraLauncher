@@ -10,8 +10,9 @@ from frontend.utils.logger import logger
 from frontend.utils.worker import run_async
 from shared.i18n import t
 
-_FIRST_CHECK_MS = 4000          # даём окну открыться, прежде чем ходить в сеть
-_RETRY_MS = 15 * 60 * 1000      # запасной повтор, если система не сообщает о состоянии сети
+_FIRST_CHECK_MS = 4000  # даём окну открыться, прежде чем ходить в сеть
+# Повторы после неудачи: сеть могла ещё не подняться (Wi-Fi после сна, модем)
+_RETRY_STEPS_MS = (30_000, 120_000, 300_000, 900_000)
 
 
 class Settings(QObject):
@@ -39,7 +40,7 @@ class Settings(QObject):
         self._language_busy = ""     # код языка, который сейчас скачивается
         self._update_seen = False    # обновление уже найдено — больше не опрашиваем
         self._retry: QTimer | None = None
-        self._network = None
+        self._attempt = 0            # номер попытки проверки обновлений
         self.load()
 
     @Property("QVariantMap", notify=changed)
@@ -213,37 +214,28 @@ class Settings(QObject):
 
     # --- Проверка обновлений сама по себе -------------------------------------------------------
     def start_auto_check(self) -> None:
-        """Проверяет обновления при запуске и каждый раз, когда появляется интернет.
+        """Проверяет обновления при запуске, а если сети не было — повторяет всё реже.
 
         Лаунчер часто открывают раньше, чем поднимется сеть (Wi-Fi после сна, мобильный модем),
-        и единственная проверка при старте в такой момент просто не удаётся. Поэтому слушаем
-        состояние сети у системы и, если проверка не прошла, повторяем её при подключении.
+        и единственная проверка при старте в такой момент просто не удаётся. Поэтому неудачная
+        проверка повторяется: сначала через полминуты, потом всё реже, до раза в четверть часа.
+
+        Спрашивать систему о состоянии сети (``QNetworkInformation``) нельзя: на Windows её
+        бэкенд намертво вешает поток интерфейса, если окно уже создано — проверено 2026-10-23.
         """
+        self._attempt = 0
         QTimer.singleShot(_FIRST_CHECK_MS, self._auto_check)
         self._retry = QTimer(self)
-        self._retry.setInterval(_RETRY_MS)
+        self._retry.setSingleShot(True)
         self._retry.timeout.connect(self._auto_check)
-        self._watch_network()
 
-    def _watch_network(self) -> None:
-        try:
-            from PySide6.QtNetwork import QNetworkInformation
-        except ImportError:  # сборка без QtNetwork — останется повтор по таймеру
+    def _schedule_retry(self) -> None:
+        """Следующая попытка: 30 с, 2 мин, 5 мин, дальше раз в 15 минут."""
+        if self._retry is None or self._retry.isActive():
             return
-        if not QNetworkInformation.loadDefaultBackend():
-            logger.debug("Состояние сети системе недоступно — обновления проверяются по таймеру")
-            return
-        info = QNetworkInformation.instance()
-        if info is None:
-            return
-        self._network = info
-
-        def on_reachability(value) -> None:
-            if value == QNetworkInformation.Reachability.Online and not self._update_seen:
-                logger.info("Появился интернет — проверяем обновления")
-                self._auto_check()
-
-        info.reachabilityChanged.connect(on_reachability)
+        delay = _RETRY_STEPS_MS[min(self._attempt, len(_RETRY_STEPS_MS) - 1)]
+        self._attempt += 1
+        self._retry.start(delay)
 
     def _auto_check(self) -> None:
         """Тихая проверка: пользователь узнаёт о ней, только если обновление действительно есть."""
@@ -261,10 +253,9 @@ class Settings(QObject):
                 self.updateOffered.emit(str(info.get("latest", "")))
 
         def failed(message: str) -> None:
-            # Нет сети или канал ещё не настроен — молчим и ждём следующего повода
+            # Нет сети или канал ещё не настроен — молчим и пробуем позже
             logger.debug(f"Обновления не проверены: {message}")
-            if self._retry is not None and not self._retry.isActive():
-                self._retry.start()
+            self._schedule_retry()
 
         run_async(self.api.check_update, done, failed, owner=self)
 
