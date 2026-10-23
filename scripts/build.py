@@ -46,6 +46,34 @@ def build_installer() -> Path:
     return ROOT / "dist" / f"NexoraLauncher-{APP_VERSION}-setup.exe"
 
 
+def precompile_qml(dist: Path) -> None:
+    """Компилирует QML в байт-код рядом с исходниками в сборке.
+
+    Иначе Qt разбирает 64 файла при первом запуске у каждого пользователя — это около
+    полусекунды и 2 МБ в его кэше. Компилируем уже разложенные файлы: кэш проверяется
+    по самому файлу, поэтому делать это до копирования нельзя.
+
+    Если компилятора нет или он споткнулся — не беда: Qt просто разберёт QML сам.
+    """
+    qml_dir = next((p for p in dist.rglob("qml") if (p / "Main.qml").exists()), None)
+    if qml_dir is None:
+        print("QML в сборке не найден — пропускаю прекомпиляцию")
+        return
+    tool = Path(sys.executable).parent / ("pyside6-qmlcachegen.exe" if os.name == "nt" else "pyside6-qmlcachegen")
+    if not tool.exists():
+        print("pyside6-qmlcachegen не найден — QML будет разбираться при первом запуске")
+        return
+    done, failed = 0, 0
+    for source in sorted(qml_dir.rglob("*.qml")):
+        result = subprocess.run([str(tool), "-I", str(qml_dir), str(source), "-o", f"{source}c"],
+                                capture_output=True)
+        if result.returncode == 0 and Path(f"{source}c").exists():
+            done += 1
+        else:
+            failed += 1
+    print(f"QML скомпилирован: {done} файлов" + (f", не вышло: {failed}" if failed else ""))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Сборка NexoraLauncher")
     parser.add_argument("--installer", action="store_true", help="собрать и установщик (Inno Setup 6)")
@@ -58,6 +86,7 @@ def main() -> int:
     subprocess.run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "nexoralauncher.spec"],
                    cwd=ROOT, check=True)
     dist = ROOT / "dist" / "NexoraLauncher"
+    precompile_qml(dist)
     system = {"Windows": "windows", "Darwin": "macos"}.get(platform.system(), "linux")
     archive = ROOT / "dist" / f"NexoraLauncher-{APP_VERSION}-{system}-{platform.machine().lower()}"
     shutil.make_archive(str(archive), "zip", dist.parent, dist.name)
