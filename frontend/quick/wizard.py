@@ -1,6 +1,6 @@
 """Мастер «Новая сборка»: чистая игра, с модами, модпак из каталога, перенос из другого лаунчера."""
 
-from PyQt6.QtCore import QObject, pyqtProperty, pyqtSignal, pyqtSlot
+from PySide6.QtCore import Property, QObject, Signal, Slot
 
 from backend.core.instance import folder_for_title
 from frontend.quick.bridge import Shell
@@ -28,12 +28,12 @@ def name_error(name: str, existing: set[str]) -> str:
 
 
 class Wizard(QObject):
-    versionsChanged = pyqtSignal()
-    loaderVersionsChanged = pyqtSignal()
-    foreignChanged = pyqtSignal()
-    packsChanged = pyqtSignal()
+    versionsChanged = Signal()
+    loaderVersionsChanged = Signal()
+    foreignChanged = Signal()
+    packsChanged = Signal()
     # Сборка создана и начала ставиться: имя
-    created = pyqtSignal(str)
+    created = Signal(str)
 
     def __init__(self, api: ApiClient, shell: Shell, library: Library, parent: QObject | None = None):
         super().__init__(parent)
@@ -54,23 +54,23 @@ class Wizard(QObject):
         self._pack_source = "modrinth"
 
     # --- Версии Minecraft ----------------------------------------------------------------------
-    @pyqtProperty("QVariantList", notify=versionsChanged)
+    @Property("QVariantList", notify=versionsChanged)
     def versions(self) -> list[dict]:
         return self._versions
 
-    @pyqtProperty(bool, notify=versionsChanged)
+    @Property(bool, notify=versionsChanged)
     def versionsLoading(self) -> bool:
         return self._versions_loading
 
-    @pyqtProperty(str, notify=versionsChanged)
+    @Property(str, notify=versionsChanged)
     def versionsError(self) -> str:
         return self._versions_error
 
-    @pyqtProperty(bool, notify=versionsChanged)
+    @Property(bool, notify=versionsChanged)
     def busy(self) -> bool:
         return self._busy
 
-    @pyqtSlot()
+    @Slot()
     def loadVersions(self) -> None:
         if self._versions or self._versions_loading:
             return
@@ -90,13 +90,13 @@ class Wizard(QObject):
 
         run_async(self.api.available_versions, done, failed, owner=self)
 
-    @pyqtSlot(bool, result="QVariantList")
+    @Slot(bool, result="QVariantList")
     def versionOptions(self, snapshots: bool) -> list[dict]:
         kinds = ("release", "snapshot") if snapshots else ("release",)
         return [{"value": v["id"], "label": v["id"]} for v in self._versions if v["type"] in kinds]
 
     # --- Версии загрузчика ---------------------------------------------------------------------
-    @pyqtProperty("QVariantList", notify=loaderVersionsChanged)
+    @Property("QVariantList", notify=loaderVersionsChanged)
     def loaderVersions(self) -> list[dict]:
         out = []
         for i, v in enumerate(self._loader_versions[:30]):
@@ -104,11 +104,11 @@ class Wizard(QObject):
             out.append({"value": v, "label": label})
         return out
 
-    @pyqtProperty(bool, notify=loaderVersionsChanged)
+    @Property(bool, notify=loaderVersionsChanged)
     def loaderLoading(self) -> bool:
         return self._loader_loading
 
-    @pyqtSlot(str, str)
+    @Slot(str, str)
     def loadLoaderVersions(self, loader: str, mc: str) -> None:
         self._loader_versions = []
         if loader == "vanilla" or not mc:
@@ -134,15 +134,15 @@ class Wizard(QObject):
         run_async(lambda: self.api.loader_versions(loader, mc), done, failed, owner=self)
 
     # --- Другие лаунчеры ---------------------------------------------------------------------------
-    @pyqtProperty("QVariantList", notify=foreignChanged)
+    @Property("QVariantList", notify=foreignChanged)
     def foreign(self) -> list[dict]:
         return self._foreign
 
-    @pyqtProperty(bool, notify=foreignChanged)
+    @Property(bool, notify=foreignChanged)
     def foreignLoading(self) -> bool:
         return self._foreign_loading
 
-    @pyqtSlot()
+    @Slot()
     def loadForeign(self) -> None:
         if self._foreign_loading:
             return
@@ -165,27 +165,27 @@ class Wizard(QObject):
         run_async(self.api.foreign_instances, done, failed, owner=self)
 
     # --- Модпаки ------------------------------------------------------------------------------------
-    @pyqtProperty("QVariantList", notify=packsChanged)
+    @Property("QVariantList", notify=packsChanged)
     def packs(self) -> list[dict]:
         return self._packs
 
-    @pyqtProperty(bool, notify=packsChanged)
+    @Property(bool, notify=packsChanged)
     def packsLoading(self) -> bool:
         return self._packs_loading
 
-    @pyqtProperty(str, notify=packsChanged)
+    @Property(str, notify=packsChanged)
     def packSource(self) -> str:
         """Откуда модпаки: modrinth, ftb или curseforge (All The Mods и др. через API FTB)."""
         return self._pack_source
 
-    @pyqtSlot(str, str)
+    @Slot(str, str)
     def setPackSource(self, source: str, query: str) -> None:
         if source in PACK_SOURCES and source != self._pack_source:
             self._pack_source = source
             self._packs = []
             self.searchPacks(query)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def searchPacks(self, query: str) -> None:
         from frontend.quick.catalog import project_row
         self._packs_gen += 1
@@ -212,7 +212,7 @@ class Wizard(QObject):
         run_async(lambda: self.api.search("modpack", query.strip(), index="relevance" if query.strip() else "downloads",
                                           limit=20), done, failed, owner=self)
 
-    @pyqtSlot(str, str)
+    @Slot(str, str)
     def installPack(self, project_id: str, title: str) -> None:
         def finished(task: dict) -> None:
             name = (task.get("result") or {}).get("name", title)
@@ -231,12 +231,12 @@ class Wizard(QObject):
         self.created.emit("")
 
     # --- Создание --------------------------------------------------------------------------------
-    @pyqtSlot(str, result=str)
+    @Slot(str, result=str)
     def nameError(self, name: str) -> str:
         entries = self.library.entries()
         return name_error(name, {e["name"] for e in entries} | {e["title"] for e in entries})
 
-    @pyqtSlot(str, str, str, str)
+    @Slot(str, str, str, str)
     def create(self, name: str, version: str, loader: str, loader_version: str) -> None:
         title = " ".join(name.split())
         # Название может содержать «:» и другие символы, недопустимые в имени папки
@@ -258,7 +258,7 @@ class Wizard(QObject):
                                                           title=title),
                   done, failed, owner=self)
 
-    @pyqtSlot("QVariantList")
+    @Slot("QVariantList")
     def importForeign(self, paths: list) -> None:
         """Перенос выбранных сборок; каждая — отдельная задача в «Загрузках»."""
         for path in paths:
@@ -266,7 +266,7 @@ class Wizard(QObject):
         if paths:
             self.created.emit("")
 
-    @pyqtSlot(str)
+    @Slot(str)
     def importFile(self, url: str) -> None:
         """Импорт .zip / .mrpack с диска."""
         self._import(local_path(url))

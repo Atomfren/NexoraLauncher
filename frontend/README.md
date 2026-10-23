@@ -1,6 +1,6 @@
 # NexoraLauncher Frontend
 
-GUI на PyQt6: основной интерфейс — Qt Quick (`quick/`), прежний на виджетах — `--ui classic`. Все данные приходят из backend по HTTP: импортов `backend.core` во frontend нет.
+GUI на PySide6: основной интерфейс — Qt Quick (`quick/`), прежний на виджетах — `--ui classic`. Все данные приходят из backend по HTTP: импортов `backend.core` во frontend нет.
 
 ## Устройство
 

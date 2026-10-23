@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any
 
-from PyQt6.QtCore import QObject, pyqtProperty, pyqtSignal, pyqtSlot
+from PySide6.QtCore import Property, QObject, Signal, Slot
 
 from frontend.quick.library import Library
 from frontend.services.api_client import ApiClient
@@ -51,8 +51,8 @@ def filter_rows(rows: list[dict], level: str, hide_noise: bool, query: str) -> t
 
 
 class LogView(QObject):
-    changed = pyqtSignal()
-    linesChanged = pyqtSignal()
+    changed = Signal()
+    linesChanged = Signal()
 
     def __init__(self, api: ApiClient, library: Library, parent: QObject | None = None):
         super().__init__(parent)
@@ -76,43 +76,43 @@ class LogView(QObject):
         library.gameExited.connect(lambda name, _code: self.reload() if name == self._name else None)
 
     # --- Свойства -------------------------------------------------------------------------------
-    @pyqtProperty("QVariantList", notify=changed)
+    @Property("QVariantList", notify=changed)
     def sources(self) -> list[dict]:
         return self._sources
 
-    @pyqtProperty(str, notify=changed)
+    @Property(str, notify=changed)
     def source(self) -> str:
         return self._source
 
-    @pyqtProperty("QVariantMap", notify=changed)
+    @Property("QVariantMap", notify=changed)
     def summary(self) -> dict:
         return self._summary
 
-    @pyqtProperty("QVariantList", notify=changed)
+    @Property("QVariantList", notify=changed)
     def problems(self) -> list[dict]:
         return self._problems
 
-    @pyqtProperty(bool, notify=changed)
+    @Property(bool, notify=changed)
     def loading(self) -> bool:
         return self._loading
 
-    @pyqtProperty(str, notify=changed)
+    @Property(str, notify=changed)
     def error(self) -> str:
         return self._error
 
-    @pyqtProperty("QVariantList", notify=linesChanged)
+    @Property("QVariantList", notify=linesChanged)
     def lines(self) -> list[dict]:
         return self._lines
 
-    @pyqtProperty(int, notify=linesChanged)
+    @Property(int, notify=linesChanged)
     def hiddenNoise(self) -> int:
         return self._hidden
 
-    @pyqtProperty(str, notify=linesChanged)
+    @Property(str, notify=linesChanged)
     def level(self) -> str:
         return self._level
 
-    @pyqtProperty(bool, notify=linesChanged)
+    @Property(bool, notify=linesChanged)
     def hideNoise(self) -> bool:
         return self._hide_noise
 
@@ -124,14 +124,14 @@ class LogView(QObject):
         self.changed.emit()
         self.linesChanged.emit()
 
-    @pyqtSlot()
+    @Slot()
     def ensure(self) -> None:
         """Вкладка открыта: загрузить логи, если ещё не загружены для этой сборки."""
         if self._name != self.library.selected and not self._loading:
             self.reload()
 
-    @pyqtSlot()
-    @pyqtSlot(str)
+    @Slot()
+    @Slot(str)
     def reload(self, source: str | None = None) -> None:
         name = self.library.selected
         if not name:
@@ -175,21 +175,21 @@ class LogView(QObject):
         self._lines, self._hidden = filter_rows(self._rows, self._level, self._hide_noise, self._query)
         self.linesChanged.emit()
 
-    @pyqtSlot(str)
+    @Slot(str)
     def setLevel(self, level: str) -> None:
         self._level = level
         self._apply()
 
-    @pyqtSlot(bool)
+    @Slot(bool)
     def setHideNoise(self, value: bool) -> None:
         self._hide_noise = value
         self._apply()
 
-    @pyqtSlot(str)
+    @Slot(str)
     def setQuery(self, query: str) -> None:
         self._query = query
         self._apply()
 
-    @pyqtSlot(result=int)
+    @Slot(result=int)
     def firstErrorRow(self) -> int:
         return next((i for i, row in enumerate(self._lines) if row["level"] == "error"), -1)

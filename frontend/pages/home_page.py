@@ -1,6 +1,6 @@
 """Главная страница: быстрый запуск и последние инстансы."""
 
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout
 
 from frontend.components import InstanceCard, launch_instance, loader_title
 from frontend.widgets import AppContext, Page, button, clear_layout, label, set_variant

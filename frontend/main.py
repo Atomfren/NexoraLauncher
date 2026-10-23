@@ -1,4 +1,4 @@
-"""Точка входа NexoraLauncher (GUI на PyQt6).
+"""Точка входа NexoraLauncher (GUI на PySide6).
 
 По умолчанию backend запускается внутри процесса на случайном порту.
 Для подключения к отдельно запущенному backend::
@@ -36,7 +36,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def _check_quick_ui(api) -> None:
     """Интерфейс QML загружается без ошибок (в сборке есть все модули Qt Quick)."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     from frontend.quick.app import QuickUi
     app = QApplication.instance() or QApplication(sys.argv[:1])
@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.self_test:
         return self_test()
 
-    from PyQt6.QtWidgets import QApplication, QMessageBox
+    from PySide6.QtWidgets import QApplication, QMessageBox
 
     from frontend.services.api_client import ApiClient
     from shared.config import AppConfig
@@ -98,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     config = AppConfig.load()
     set_language(config.language)
     # Стандартные кнопки Qt (Да/Нет, Сохранить/Отмена) на языке интерфейса
-    from PyQt6.QtCore import QLibraryInfo, QTranslator
+    from PySide6.QtCore import QLibraryInfo, QTranslator
     qt_translator = QTranslator(app)
     if qt_translator.load(f"qtbase_{config.language}",
                           QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)):

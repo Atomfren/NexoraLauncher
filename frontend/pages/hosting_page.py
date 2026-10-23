@@ -1,8 +1,8 @@
 """«Свой сервер»: бесплатный сервер для игры с друзьями без белого IP."""
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QGuiApplication
-from PyQt6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QMenu, QSizePolicy, QVBoxLayout
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QMenu, QSizePolicy, QVBoxLayout
 
 from frontend.components import launch_instance
 from frontend.dialogs.hosting_dialogs import (

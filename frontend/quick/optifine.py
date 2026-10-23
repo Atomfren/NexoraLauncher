@@ -4,7 +4,7 @@
 Для Fabric/Quilt/NeoForge вместо OptiFine предлагаются Sodium + Iris.
 """
 
-from PyQt6.QtCore import QObject, QTimer, pyqtProperty, pyqtSignal, pyqtSlot
+from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 
 from frontend.quick.bridge import Shell
 from frontend.quick.build import local_path
@@ -18,7 +18,7 @@ ALTERNATIVE = ("sodium", "iris")
 
 
 class OptiFine(QObject):
-    changed = pyqtSignal()
+    changed = Signal()
 
     def __init__(self, api: ApiClient, shell: Shell, library: Library, parent: QObject | None = None):
         super().__init__(parent)
@@ -35,31 +35,31 @@ class OptiFine(QObject):
         self._timer = QTimer(self, interval=_WAIT_MS)
         self._timer.timeout.connect(self._check_downloads)
 
-    @pyqtProperty("QVariantMap", notify=changed)
+    @Property("QVariantMap", notify=changed)
     def status(self) -> dict:
         return self._status
 
-    @pyqtProperty("QVariantList", notify=changed)
+    @Property("QVariantList", notify=changed)
     def versions(self) -> list[dict]:
         return self._versions
 
-    @pyqtProperty(int, notify=changed)
+    @Property(int, notify=changed)
     def selected(self) -> int:
         return self._selected
 
-    @pyqtProperty(str, notify=changed)
+    @Property(str, notify=changed)
     def state(self) -> str:
         return self._state
 
-    @pyqtProperty("QVariantMap", notify=changed)
+    @Property("QVariantMap", notify=changed)
     def found(self) -> dict:
         return self._found
 
-    @pyqtProperty(str, notify=changed)
+    @Property(str, notify=changed)
     def error(self) -> str:
         return self._error
 
-    @pyqtSlot()
+    @Slot()
     def open(self) -> None:
         self._name = self.library.selected
         self._state = "loading"
@@ -90,16 +90,16 @@ class OptiFine(QObject):
 
         run_async(fetch, done, failed, owner=self)
 
-    @pyqtSlot()
+    @Slot()
     def close(self) -> None:
         self._timer.stop()
 
-    @pyqtSlot(int)
+    @Slot(int)
     def select(self, index: int) -> None:
         self._selected = index
         self.changed.emit()
 
-    @pyqtSlot()
+    @Slot()
     def openDownloadPage(self) -> None:
         if not self._versions:
             self.shell.openUrl("https://optifine.net/downloads")
@@ -125,14 +125,14 @@ class OptiFine(QObject):
 
         run_async(lambda: self.api.optifine_downloaded(mc), done, lambda _m: None, owner=self, background=True)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def installFile(self, url: str) -> None:
         """Выбрать jar вручную."""
         path = local_path(url)
         self._found = {"path": path, "filename": path.replace("\\", "/").rsplit("/", 1)[-1]}
         self.install()
 
-    @pyqtSlot()
+    @Slot()
     def install(self) -> None:
         name, path = self._name, self._found.get("path", "")
         if not path:
@@ -155,7 +155,7 @@ class OptiFine(QObject):
         run_async(lambda: self.api.install_optifine(name, path),
                   lambda task: self.shell.tracker.track(task, finished, failed), failed, owner=self)
 
-    @pyqtSlot()
+    @Slot()
     def remove(self) -> None:
         name = self._name
 
@@ -166,7 +166,7 @@ class OptiFine(QObject):
 
         run_async(lambda: self.api.remove_optifine(name), done, lambda msg: self.shell.toast(msg, "err"), owner=self)
 
-    @pyqtSlot()
+    @Slot()
     def installAlternative(self) -> None:
         """Sodium + Iris вместо OptiFine (Fabric, Quilt, NeoForge)."""
         name = self._name

@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from PyQt6.QtCore import QObject, QTimer, pyqtProperty, pyqtSignal, pyqtSlot
+from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 
 from frontend.quick import art, fmt
 from frontend.quick.bridge import Shell
@@ -118,12 +118,12 @@ def ping_kind(ms: int | None) -> str:
 
 
 class Network(QObject):
-    serversChanged = pyqtSignal()
-    ownChanged = pyqtSignal()
-    consoleChanged = pyqtSignal()
-    backupsChanged = pyqtSignal()
-    propsChanged = pyqtSignal()
-    modsChanged = pyqtSignal()
+    serversChanged = Signal()
+    ownChanged = Signal()
+    consoleChanged = Signal()
+    backupsChanged = Signal()
+    propsChanged = Signal()
+    modsChanged = Signal()
 
     def __init__(self, api: ApiClient, shell: Shell, library: Library, parent: QObject | None = None):
         super().__init__(parent)
@@ -146,57 +146,57 @@ class Network(QObject):
         self._console_timer.timeout.connect(self._fetch_console)
 
     # --- Свойства -------------------------------------------------------------------------------
-    @pyqtProperty("QVariantList", notify=serversChanged)
+    @Property("QVariantList", notify=serversChanged)
     def servers(self) -> list[dict]:
         return self._servers
 
-    @pyqtProperty(bool, notify=serversChanged)
+    @Property(bool, notify=serversChanged)
     def loaded(self) -> bool:
         return self._loaded
 
-    @pyqtProperty("QVariantList", notify=ownChanged)
+    @Property("QVariantList", notify=ownChanged)
     def ownServers(self) -> list[dict]:
         return self._own
 
-    @pyqtProperty("QVariantMap", notify=ownChanged)
+    @Property("QVariantMap", notify=ownChanged)
     def own(self) -> dict:
         return next((s for s in self._own if s["name"] == self._selected_own), self._own[0] if self._own else {})
 
-    @pyqtProperty("QVariantList", notify=consoleChanged)
+    @Property("QVariantList", notify=consoleChanged)
     def console(self) -> list[str]:
         return self._console
 
-    @pyqtProperty("QVariantList", notify=backupsChanged)
+    @Property("QVariantList", notify=backupsChanged)
     def backups(self) -> list[dict]:
         return self._backups
 
-    @pyqtProperty("QVariantList", notify=propsChanged)
+    @Property("QVariantList", notify=propsChanged)
     def props(self) -> list[dict]:
         return self._props
 
-    @pyqtProperty("QVariantList", notify=modsChanged)
+    @Property("QVariantList", notify=modsChanged)
     def mods(self) -> list[dict]:
         return self._mods
 
-    @pyqtProperty(bool, notify=modsChanged)
+    @Property(bool, notify=modsChanged)
     def modsLoading(self) -> bool:
         return self._mods_loading
 
     # --- Запуск раздела -------------------------------------------------------------------------
-    @pyqtSlot()
+    @Slot()
     def activate(self) -> None:
         """Раздел открыт: обновить списки и следить за своим сервером."""
         self.refreshServers()
         self.refreshOwn()
         self._poll.start()
 
-    @pyqtSlot()
+    @Slot()
     def deactivate(self) -> None:
         self._poll.stop()
         self._console_timer.stop()
 
     # --- Избранные серверы ----------------------------------------------------------------------
-    @pyqtSlot()
+    @Slot()
     def refreshServers(self) -> None:
         def done(items: list[dict]) -> None:
             old = {s["id"]: s for s in self._servers}
@@ -237,7 +237,7 @@ class Network(QObject):
         self._servers = [dict(s, **changes) if s["id"] == server_id else s for s in self._servers]
         self.serversChanged.emit()
 
-    @pyqtSlot(str, str)
+    @Slot(str, str)
     def addServer(self, name: str, address: str) -> None:
         host, _, port = address.strip().rpartition(":") if ":" in address else (address.strip(), "", "")
         port_num = int(port) if port.isdigit() else 25565
@@ -249,12 +249,12 @@ class Network(QObject):
         run_async(lambda: self.api.create_server(name.strip() or host, host, port_num), done,
                   lambda msg: self.shell.toast(msg, "err"), owner=self)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def removeServer(self, server_id: str) -> None:
         run_async(lambda: self.api.delete_server(server_id), lambda _r: self.refreshServers(),
                   lambda msg: self.shell.toast(msg, "err"), owner=self)
 
-    @pyqtSlot(str, str)
+    @Slot(str, str)
     def connectTo(self, server_id: str, instance: str) -> None:
         """Запуск выбранной сборки с автоподключением — через Library, чтобы кнопка «Играть» показала прогресс."""
         row = next((s for s in self._servers if s["id"] == server_id), None)
@@ -269,7 +269,7 @@ class Network(QObject):
         self.shell.navigate("library")
 
     # --- Свой сервер ----------------------------------------------------------------------------
-    @pyqtSlot()
+    @Slot()
     def refreshOwn(self) -> None:
         def done(items: list[dict]) -> None:
             self._own = [self._own_row(i) for i in items]
@@ -287,7 +287,7 @@ class Network(QObject):
                 "uptime": int(item.get("uptime_seconds") or 0), "memory": int(item.get("max_memory") or 0),
                 "seed": art.seed_of(item["name"]), "tunnel": bool(item.get("tunnel", True))}
 
-    @pyqtSlot(str)
+    @Slot(str)
     def selectOwn(self, name: str) -> None:
         self._selected_own = name
         self.ownChanged.emit()
@@ -297,12 +297,12 @@ class Network(QObject):
     def _own_name(self) -> str:
         return self.own.get("name", "")
 
-    @pyqtSlot()
+    @Slot()
     def start(self) -> None:
         name = self._own_name()
         self._own_action(lambda: self.api.start_hosted_server(name))
 
-    @pyqtSlot()
+    @Slot()
     def stop(self) -> None:
         name = self._own_name()
         self._own_action(lambda: self.api.stop_hosted_server(name))
@@ -316,7 +316,7 @@ class Network(QObject):
 
         run_async(call, done, lambda msg: self.shell.toast(msg, "err"), owner=self)
 
-    @pyqtSlot(str, str, int, str, bool)
+    @Slot(str, str, int, str, bool)
     def createOwn(self, name: str, version: str, memory_mb: int, core: str, accept_eula: bool) -> None:
         def done(result) -> None:
             self._selected_own = name
@@ -329,7 +329,7 @@ class Network(QObject):
                   lambda msg: self.shell.toast(msg, "err"), owner=self)
 
     # --- Консоль --------------------------------------------------------------------------------
-    @pyqtSlot(bool)
+    @Slot(bool)
     def setConsoleOpen(self, value: bool) -> None:
         self._console_open = value
         if value:
@@ -350,7 +350,7 @@ class Network(QObject):
 
         run_async(lambda: self.api.server_console(name, 400), done, lambda _m: None, owner=self, background=True)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def sendCommand(self, command: str) -> None:
         name = self._own_name()
         command = command.strip().lstrip("/")
@@ -360,7 +360,7 @@ class Network(QObject):
                   lambda msg: self.shell.toast(msg, "err"), owner=self)
 
     # --- Бэкапы ----------------------------------------------------------------------------------
-    @pyqtSlot()
+    @Slot()
     def loadBackups(self) -> None:
         name = self._own_name()
 
@@ -372,7 +372,7 @@ class Network(QObject):
 
         run_async(lambda: self.api.server_backups(name), done, lambda msg: self.shell.toast(msg, "err"), owner=self)
 
-    @pyqtSlot()
+    @Slot()
     def createBackup(self) -> None:
         name = self._own_name()
 
@@ -386,7 +386,7 @@ class Network(QObject):
         run_async(lambda: self.api.create_server_backup(name), started,
                   lambda msg: self.shell.toast(msg, "err"), owner=self)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def restoreBackup(self, filename: str) -> None:
         name = self._own_name()
 
@@ -399,7 +399,7 @@ class Network(QObject):
                   lambda msg: self.shell.toast(msg, "err"), owner=self)
 
     # --- Настройки сервера (server.properties) -----------------------------------------------------
-    @pyqtSlot()
+    @Slot()
     def loadProps(self) -> None:
         name = self._own_name()
         if not name:
@@ -411,7 +411,7 @@ class Network(QObject):
 
         run_async(lambda: self.api.server_properties(name), done, lambda msg: self.shell.toast(msg, "err"), owner=self)
 
-    @pyqtSlot(str, "QVariant")
+    @Slot(str, "QVariant")
     def setProp(self, key: str, value: Any) -> None:
         name = self._own_name()
         normalized = normalize_property(key, value)
@@ -431,7 +431,7 @@ class Network(QObject):
                   lambda msg: self.shell.toast(msg, "err"), owner=self)
 
     # --- Моды и плагины своего сервера ------------------------------------------------------------
-    @pyqtSlot()
+    @Slot()
     def loadMods(self) -> None:
         name = self._own_name()
         if not name:
@@ -454,7 +454,7 @@ class Network(QObject):
 
         run_async(lambda: self.api.server_mods(name), done, failed, owner=self)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def removeMod(self, filename: str) -> None:
         name = self._own_name()
         title = next((m["name"] for m in self._mods if m["filename"] == filename), filename)

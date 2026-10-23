@@ -1,7 +1,7 @@
 """OptiFine для инстанса: выбор версии на optifine.net, поиск скачанного файла, установка."""
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QDialog, QFileDialog, QHBoxLayout, QListWidget, QListWidgetItem, QVBoxLayout
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import QDialog, QFileDialog, QHBoxLayout, QListWidget, QListWidgetItem, QVBoxLayout
 
 from frontend.utils.worker import run_async
 from frontend.widgets import AppContext, button, confirm, label, open_url, show_error, show_info

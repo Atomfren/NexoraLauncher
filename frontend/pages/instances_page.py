@@ -1,6 +1,6 @@
 """Страница инстансов."""
 
-from PyQt6.QtWidgets import QFileDialog, QLineEdit, QMenu
+from PySide6.QtWidgets import QFileDialog, QLineEdit, QMenu
 
 from frontend.components import InstanceCard
 from frontend.dialogs.create_instance_dialog import CreateInstanceDialog

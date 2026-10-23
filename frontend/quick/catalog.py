@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from PyQt6.QtCore import QObject, QTimer, pyqtProperty, pyqtSignal, pyqtSlot
+from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 
 from frontend.quick import art, fmt
 from frontend.quick.bridge import Shell
@@ -66,9 +66,9 @@ def project_row(hit: dict, state: str = "none") -> dict[str, Any]:
 
 
 class Catalog(QObject):
-    changed = pyqtSignal()
-    resultsChanged = pyqtSignal()
-    projectChanged = pyqtSignal()
+    changed = Signal()
+    resultsChanged = Signal()
+    projectChanged = Signal()
 
     def __init__(self, api: ApiClient, shell: Shell, library: Library, parent: QObject | None = None):
         super().__init__(parent)
@@ -101,16 +101,16 @@ class Catalog(QObject):
         self._started = False
 
     # --- Свойства -------------------------------------------------------------------------------
-    @pyqtProperty(str, notify=changed)
+    @Property(str, notify=changed)
     def type(self) -> str:
         return self._type
 
-    @pyqtProperty(str, notify=changed)
+    @Property(str, notify=changed)
     def source(self) -> str:
         """Источник модпаков: modrinth, ftb или curseforge."""
         return self._source
 
-    @pyqtSlot(str)
+    @Slot(str)
     def setSource(self, value: str) -> None:
         if value not in PACK_SOURCES or value == self._source:
             return
@@ -123,31 +123,31 @@ class Catalog(QObject):
     def _external(self) -> bool:
         return self._type == "modpack" and self._source != "modrinth"
 
-    @pyqtProperty(str, notify=changed)
+    @Property(str, notify=changed)
     def query(self) -> str:
         return self._query
 
-    @pyqtProperty(str, notify=changed)
+    @Property(str, notify=changed)
     def gameVersion(self) -> str:
         return self._version
 
-    @pyqtProperty(str, notify=changed)
+    @Property(str, notify=changed)
     def loader(self) -> str:
         return self._loader
 
-    @pyqtProperty(str, notify=changed)
+    @Property(str, notify=changed)
     def category(self) -> str:
         return self._category
 
-    @pyqtProperty(str, notify=changed)
+    @Property(str, notify=changed)
     def sort(self) -> str:
         return self._sort
 
-    @pyqtProperty(str, notify=changed)
+    @Property(str, notify=changed)
     def target(self) -> str:
         return self._target
 
-    @pyqtProperty("QVariantList", notify=changed)
+    @Property("QVariantList", notify=changed)
     def targets(self) -> list[dict]:
         """Куда ставить: сборки (моды, ресурсы) или свои серверы (плагины). У модпака цели нет."""
         if self._type == "plugin":
@@ -156,40 +156,40 @@ class Catalog(QObject):
             return []
         return [{"value": e["name"], "label": e["title"], "loader": e["loader"]} for e in self.library.entries()]
 
-    @pyqtProperty("QVariantList", notify=changed)
+    @Property("QVariantList", notify=changed)
     def categories(self) -> list[dict]:
         return [{"value": c, "label": t(f"q.cat_{c.replace('-', '_')}")} for c in CATEGORIES[self._type]]
 
-    @pyqtProperty("QVariantList", notify=resultsChanged)
+    @Property("QVariantList", notify=resultsChanged)
     def results(self) -> list[dict]:
         return self._results
 
-    @pyqtProperty(int, notify=resultsChanged)
+    @Property(int, notify=resultsChanged)
     def total(self) -> int:
         return self._total
 
-    @pyqtProperty(bool, notify=resultsChanged)
+    @Property(bool, notify=resultsChanged)
     def loading(self) -> bool:
         return self._loading
 
-    @pyqtProperty(str, notify=resultsChanged)
+    @Property(str, notify=resultsChanged)
     def error(self) -> str:
         return self._error
 
-    @pyqtProperty(bool, notify=resultsChanged)
+    @Property(bool, notify=resultsChanged)
     def hasMore(self) -> bool:
         return len(self._results) < self._total
 
-    @pyqtProperty("QVariantMap", notify=projectChanged)
+    @Property("QVariantMap", notify=projectChanged)
     def project(self) -> dict:
         return self._project
 
-    @pyqtProperty("QVariantList", notify=projectChanged)
+    @Property("QVariantList", notify=projectChanged)
     def projectVersions(self) -> list[dict]:
         return self._versions
 
     # --- Фильтры --------------------------------------------------------------------------------
-    @pyqtSlot()
+    @Slot()
     def start(self) -> None:
         """Первое открытие раздела: цель — выбранная сборка, фильтры — её версия и загрузчик."""
         if self._started:
@@ -217,7 +217,7 @@ class Catalog(QObject):
 
         run_async(self.api.hosted_servers, done, lambda msg: logger.warning(msg), owner=self)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def setType(self, value: str) -> None:
         if value == self._type or value not in CONTENT_TYPE:
             return
@@ -237,12 +237,12 @@ class Catalog(QObject):
                                 else self._target)
         self.search()
 
-    @pyqtSlot(str)
+    @Slot(str)
     def setQuery(self, value: str) -> None:
         self._query = value.strip()
         self._search_timer.start()
 
-    @pyqtSlot(str, str)
+    @Slot(str, str)
     def setFilter(self, key: str, value: str) -> None:
         if key == "version":
             self._version = value
@@ -262,11 +262,11 @@ class Catalog(QObject):
         self.search()
 
     # --- Поиск ----------------------------------------------------------------------------------
-    @pyqtSlot()
+    @Slot()
     def search(self) -> None:
         self._load(0)
 
-    @pyqtSlot()
+    @Slot()
     def loadMore(self) -> None:
         if not self._loading and self.hasMore:
             self._load(len(self._results))
@@ -377,7 +377,7 @@ class Catalog(QObject):
         if changed:
             self._restate()
 
-    @pyqtSlot(str)
+    @Slot(str)
     def install(self, project_id: str) -> None:
         kind, target = self._type, self._target
         row = next((r for r in self._results if r["id"] == project_id), self._project)
@@ -427,7 +427,7 @@ class Catalog(QObject):
         run_async(call, started, failed, owner=self)
 
     # --- Карточка проекта -------------------------------------------------------------------------
-    @pyqtSlot(str)
+    @Slot(str)
     def openProject(self, project_id: str) -> None:
         row = next((r for r in self._results if r["id"] == project_id), None)
         self._project = dict(row or {"id": project_id, "title": "", "icon": ""}, gallery=[], loadingDetails=True)
@@ -487,7 +487,7 @@ class Catalog(QObject):
 
         run_async(lambda: self.api.pack(provider, pack_id), done, failed, owner=self)
 
-    @pyqtSlot()
+    @Slot()
     def closeProject(self) -> None:
         self._project = {}
         self._versions = []

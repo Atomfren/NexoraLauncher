@@ -6,12 +6,12 @@ import sys
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-pytest.importorskip("PyQt6.QtWidgets")
+pytest.importorskip("PySide6.QtWidgets")
 
 
 @pytest.fixture
 def qt_app(monkeypatch):
-    from PyQt6.QtWidgets import QApplication, QMessageBox
+    from PySide6.QtWidgets import QApplication, QMessageBox
 
     app = QApplication.instance() or QApplication(sys.argv)
     # Модальные окна не должны блокировать тест (нет сети и т.п.)
@@ -22,7 +22,7 @@ def qt_app(monkeypatch):
 
 
 def _pump(seconds: float) -> None:
-    from PyQt6.QtCore import QEventLoop, QTimer
+    from PySide6.QtCore import QEventLoop, QTimer
     loop = QEventLoop()
     QTimer.singleShot(int(seconds * 1000), loop.quit)
     loop.exec()

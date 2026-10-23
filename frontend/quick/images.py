@@ -23,10 +23,10 @@ from collections import OrderedDict
 from collections.abc import Callable
 from urllib.parse import quote, unquote
 
-from PyQt6.QtCore import QByteArray, QRectF, QSize, Qt, QUrl
-from PyQt6.QtGui import QImage, QImageReader, QPainter, QPainterPath
-from PyQt6.QtQuick import QQuickImageProvider
-from PyQt6.QtSvg import QSvgRenderer
+from PySide6.QtCore import QByteArray, QRectF, QSize, Qt, QUrl
+from PySide6.QtGui import QImage, QImageReader, QPainter, QPainterPath
+from PySide6.QtQuick import QQuickImageProvider
+from PySide6.QtSvg import QSvgRenderer
 
 from frontend.quick import art, icons
 from frontend.utils.logger import logger
@@ -103,14 +103,18 @@ class NxImageProvider(QQuickImageProvider):
         self._remote: OrderedDict[str, QImage] = OrderedDict()
         self._lock = threading.Lock()
 
-    def requestImage(self, image_id: str, requested: QSize):
+    def requestImage(self, image_id: str, size: QSize, requested: QSize) -> QImage:
+        """Готовая картинка; ``size`` — выходной параметр с её настоящим размером (так принято в Qt)."""
         try:
             image = self._make(image_id, requested)
         except Exception:  # noqa: BLE001 — битая картинка не должна ронять интерфейс
             logger.debug(f"Не удалось построить картинку {image_id}")
             image = QImage(1, 1, QImage.Format.Format_ARGB32_Premultiplied)
             image.fill(Qt.GlobalColor.transparent)
-        return image, image.size()
+        if size is not None:
+            size.setWidth(image.width())
+            size.setHeight(image.height())
+        return image
 
     def _make(self, image_id: str, requested: QSize) -> QImage:
         kind, _, rest = image_id.partition("/")

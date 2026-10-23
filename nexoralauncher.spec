@@ -20,13 +20,17 @@ a = Analysis(
     pathex=["."],
     datas=datas,
     hiddenimports=hiddenimports,
-    excludes=["tkinter", "pytest", "llama_cpp", "PyQt6.QtWebEngineCore", "PyQt6.QtQuick3D",
-              "PyQt6.QtMultimedia", "PyQt6.Qt3DCore", "PyQt6.QtBluetooth"],
+    excludes=["tkinter", "pytest", "llama_cpp", "PyQt6", "PySide6.QtWebEngineCore", "PySide6.QtQuick3D",
+              "PySide6.QtMultimedia", "PySide6.Qt3DCore", "PySide6.QtBluetooth"],
     noarchive=False,
 )
-# Модули Qt, которые интерфейс не использует (3D, мультимедиа, датчики…): −40 МБ в сборке
+# Модули Qt, которые интерфейс не использует (3D, мультимедиа, датчики…): −40 МБ в сборке.
+# Стили Qt Quick Controls, кроме Basic: интерфейс всегда работает на Basic (QT_QUICK_CONTROLS_STYLE)
 _UNUSED_QT = ("Quick3D", "Multimedia", "Positioning", "RemoteObjects", "Sensors", "TextToSpeech", "WebChannel",
-              "WebSockets", "Pdf", "QuickTest", "Qt6Test", "qml/QtTest", "SpatialAudio")
+              "WebSockets", "Pdf", "QuickTest", "Qt6Test", "qml/QtTest", "SpatialAudio",
+              "Controls2Imagine", "Controls2Material", "Controls2Universal", "Controls2Fusion",
+              "Controls/Imagine", "Controls/Material", "Controls/Universal", "Controls/Fusion",
+              "LabsStyleKit", "Labs/StyleKit")
 
 
 def _used(entry) -> bool:

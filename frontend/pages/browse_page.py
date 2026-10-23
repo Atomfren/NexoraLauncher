@@ -1,7 +1,7 @@
 """Каталог Modrinth: моды, модпаки, ресурспаки, шейдеры."""
 
-from PyQt6.QtCore import QTimer
-from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout
 
 from frontend.utils.worker import run_async
 from frontend.widgets import (

@@ -8,17 +8,17 @@ from datetime import date, datetime
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-pytest.importorskip("PyQt6.QtQuick")
+pytest.importorskip("PySide6.QtQuick")
 
 
 @pytest.fixture
 def qt_app():
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
     return QApplication.instance() or QApplication(sys.argv)
 
 
 def _pump_until(predicate, timeout: float = 10.0) -> bool:
-    from PyQt6.QtCore import QCoreApplication, QEventLoop
+    from PySide6.QtCore import QCoreApplication, QEventLoop
     end = time.time() + timeout
     while time.time() < end:
         QCoreApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 50)
@@ -68,8 +68,8 @@ def test_procedural_art_is_deterministic(qt_app):
 
 
 def test_image_refs_and_provider(qt_app, tmp_path):
-    from PyQt6.QtCore import QSize
-    from PyQt6.QtGui import QColor, QImage
+    from PySide6.QtCore import QSize
+    from PySide6.QtGui import QColor, QImage
 
     from frontend.quick.images import NxImageProvider, decode_ref, encode_ref, file_ref
 
@@ -83,16 +83,23 @@ def test_image_refs_and_provider(qt_app, tmp_path):
     image.save(str(shot))
 
     provider = NxImageProvider(fetch=lambda url: b"")
-    size = QSize(48, 48)
+    requested = QSize(48, 48)
+
+    def request(image_id: str):
+        """Как зовёт Qt: ``size`` — выходной параметр, картинка — результат."""
+        out = QSize()
+        return provider.requestImage(image_id, out, requested), out
+
     for image_id in ("icon/play/ffffff", "loader/fabric", "logo/ffffff/f0b23a", "illus/library/999999",
                      "round/10/0/scene/dusk/11/20/20", "round/6/1/mod/5/140", "round/4/0/head/3",
                      "round/6/0/" + file_ref(str(shot))[len("image://nx/"):]):
-        result, result_size = provider.requestImage(image_id, size)
-        assert result_size == size, image_id
-    rounded, _ = provider.requestImage("round/10/0/" + file_ref(str(shot))[len("image://nx/"):], size)
+        result, result_size = request(image_id)
+        assert result_size == requested, image_id
+        assert result.size() == requested, image_id
+    rounded, _ = request("round/10/0/" + file_ref(str(shot))[len("image://nx/"):])
     assert rounded.pixelColor(0, 0).alpha() == 0          # угол прозрачный
     assert rounded.pixelColor(24, 24).name() == "#336699"  # центр — сама картинка
-    broken, _ = provider.requestImage("round/6/0/file/nothing", size)
+    broken, _ = request("round/6/0/file/nothing")
     assert broken.width() == 1                              # битая картинка не роняет интерфейс
 
 
@@ -185,7 +192,7 @@ def test_quick_window_loads_and_plays(qt_app, fake_minecraft, monkeypatch):
         import tempfile
         from pathlib import Path
 
-        from PyQt6.QtCore import QUrl
+        from PySide6.QtCore import QUrl
         with tempfile.TemporaryDirectory() as tmp:
             archive = Path(tmp) / "world-copy"
             build.exportWorld("Мир", QUrl.fromLocalFile(str(archive)).toString())
@@ -194,7 +201,7 @@ def test_quick_window_loads_and_plays(qt_app, fake_minecraft, monkeypatch):
             assert _pump_until(lambda: sorted(w["name"] for w in build.worlds) == ["Мир", "Мир (2)"])
 
         # Боковая панель: контент всегда начинается там, где она заканчивается (без наслоения и полосы)
-        from PyQt6.QtQuick import QQuickItem
+        from PySide6.QtQuick import QQuickItem
         sidebar = ui.window.findChild(QQuickItem, "sidebar")
         content = ui.window.findChild(QQuickItem, "content")
         for _ in range(2):
@@ -236,7 +243,7 @@ def test_quick_window_loads_and_plays(qt_app, fake_minecraft, monkeypatch):
         assert ("vanilla", "1.20.1") in fake_minecraft
 
         # «Сворачивать лаунчер при запуске игры» (по умолчанию включено): свернулось и вернулось после выхода
-        from PyQt6.QtGui import QWindow
+        from PySide6.QtGui import QWindow
         assert api.settings()["hide_on_launch"] is True
         lib.play("Smoke")
         assert _pump_until(lambda: lib.current.get("state") == "running", 15)

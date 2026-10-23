@@ -1,7 +1,7 @@
 """Диалоги «Турбо» и «Обновления модов»."""
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QCheckBox, QDialog, QHBoxLayout, QListWidget, QListWidgetItem, QVBoxLayout
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QCheckBox, QDialog, QHBoxLayout, QListWidget, QListWidgetItem, QVBoxLayout
 
 from frontend.utils.worker import run_async
 from frontend.widgets import AppContext, button, label, show_error, show_info

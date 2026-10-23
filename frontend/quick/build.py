@@ -3,8 +3,8 @@
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QObject, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QGuiApplication
+from PySide6.QtCore import Property, QObject, QUrl, Signal, Slot
+from PySide6.QtGui import QGuiApplication
 
 from frontend.quick import art, fmt
 from frontend.quick.bridge import Shell
@@ -85,10 +85,10 @@ def verdict_from(report: dict) -> dict[str, Any]:
 
 
 class BuildDetails(QObject):
-    changed = pyqtSignal()
-    contentChanged = pyqtSignal()
-    verdictChanged = pyqtSignal()
-    extrasChanged = pyqtSignal()
+    changed = Signal()
+    contentChanged = Signal()
+    verdictChanged = Signal()
+    extrasChanged = Signal()
 
     def __init__(self, api: ApiClient, shell: Shell, library: Library, parent: QObject | None = None):
         super().__init__(parent)
@@ -114,59 +114,59 @@ class BuildDetails(QObject):
         self._on_selected()
 
     # --- Свойства -------------------------------------------------------------------------------
-    @pyqtProperty(str, notify=changed)
+    @Property(str, notify=changed)
     def name(self) -> str:
         return self._name
 
-    @pyqtProperty(bool, notify=changed)
+    @Property(bool, notify=changed)
     def loading(self) -> bool:
         return self._loading
 
-    @pyqtProperty("QVariantList", notify=changed)
+    @Property("QVariantList", notify=changed)
     def worlds(self) -> list[dict]:
         return self._worlds
 
-    @pyqtProperty("QVariantList", notify=changed)
+    @Property("QVariantList", notify=changed)
     def screenshots(self) -> list[dict]:
         return self._shots
 
-    @pyqtProperty("QVariantList", notify=contentChanged)
+    @Property("QVariantList", notify=contentChanged)
     def mods(self) -> list[dict]:
         return self._content["mod"]
 
-    @pyqtProperty("QVariantList", notify=contentChanged)
+    @Property("QVariantList", notify=contentChanged)
     def resourcepacks(self) -> list[dict]:
         return self._content["resourcepack"]
 
-    @pyqtProperty("QVariantList", notify=contentChanged)
+    @Property("QVariantList", notify=contentChanged)
     def shaders(self) -> list[dict]:
         return self._content["shader"]
 
-    @pyqtProperty(int, notify=contentChanged)
+    @Property(int, notify=contentChanged)
     def updatesCount(self) -> int:
         return len(self._updates)
 
-    @pyqtProperty(bool, notify=contentChanged)
+    @Property(bool, notify=contentChanged)
     def checkingUpdates(self) -> bool:
         return self._checking
 
-    @pyqtProperty("QVariantMap", notify=verdictChanged)
+    @Property("QVariantMap", notify=verdictChanged)
     def verdict(self) -> dict:
         return self._verdict
 
-    @pyqtProperty("QVariantMap", notify=changed)
+    @Property("QVariantMap", notify=changed)
     def server(self) -> dict:
         return self._server
 
-    @pyqtProperty("QVariantMap", notify=changed)
+    @Property("QVariantMap", notify=changed)
     def globalSettings(self) -> dict:
         return self._settings
 
-    @pyqtProperty("QVariantMap", notify=extrasChanged)
+    @Property("QVariantMap", notify=extrasChanged)
     def turbo(self) -> dict:
         return self._turbo
 
-    @pyqtProperty("QVariantList", notify=extrasChanged)
+    @Property("QVariantList", notify=extrasChanged)
     def snapshots(self) -> list[dict]:
         return self._snapshots
 
@@ -198,7 +198,7 @@ class BuildDetails(QObject):
 
         return wrapped
 
-    @pyqtSlot()
+    @Slot()
     def reload(self) -> None:
         name = self._name
         if not name:
@@ -232,7 +232,7 @@ class BuildDetails(QObject):
         self.reloadContent()
         self.reloadVerdict()
 
-    @pyqtSlot()
+    @Slot()
     def reloadContent(self) -> None:
         name = self._name
 
@@ -246,7 +246,7 @@ class BuildDetails(QObject):
 
         run_async(fetch, self._guard(done), lambda msg: logger.warning(f"Контент не загружен: {msg}"), owner=self)
 
-    @pyqtSlot()
+    @Slot()
     def reloadVerdict(self) -> None:
         name = self._name
 
@@ -261,14 +261,14 @@ class BuildDetails(QObject):
         run_async(lambda: self.api.diagnose(name), self._guard(done), self._guard(failed), owner=self)
 
     # --- Действия -------------------------------------------------------------------------------
-    @pyqtSlot(str, str, bool)
+    @Slot(str, str, bool)
     def setEnabled(self, content_type: str, filename: str, enabled: bool) -> None:
         name = self._name
         run_async(lambda: self.api.toggle_content(name, content_type, filename, enabled),
                   self._guard(lambda _r: self.reloadContent()),
                   lambda msg: self.shell.toast(msg, "err"), owner=self)
 
-    @pyqtSlot(str, "QVariantList", bool)
+    @Slot(str, "QVariantList", bool)
     def setManyEnabled(self, content_type: str, filenames: list, enabled: bool) -> None:
         name = self._name
 
@@ -280,7 +280,7 @@ class BuildDetails(QObject):
         run_async(work, self._guard(lambda _r: self.reloadContent()),
                   lambda msg: self.shell.toast(msg, "err"), owner=self)
 
-    @pyqtSlot(str, "QVariantList")
+    @Slot(str, "QVariantList")
     def removeContent(self, content_type: str, filenames: list) -> None:
         name = self._name
 
@@ -294,7 +294,7 @@ class BuildDetails(QObject):
 
         run_async(work, self._guard(done), lambda msg: self.shell.toast(msg, "err"), owner=self)
 
-    @pyqtSlot(str, "QVariantList")
+    @Slot(str, "QVariantList")
     def addLocalContent(self, content_type: str, urls: list) -> None:
         name = self._name
         paths = [local_path(u) for u in urls]
@@ -309,7 +309,7 @@ class BuildDetails(QObject):
 
         run_async(work, self._guard(done), lambda msg: self.shell.toast(msg, "err"), owner=self)
 
-    @pyqtSlot()
+    @Slot()
     def checkUpdates(self) -> None:
         name = self._name
         self._checking = True
@@ -331,7 +331,7 @@ class BuildDetails(QObject):
 
         run_async(lambda: self.api.mod_updates(name), self._guard(done), self._guard(failed), owner=self)
 
-    @pyqtSlot()
+    @Slot()
     def applyUpdates(self) -> None:
         name = self._name
         ids = [u["version_id"] for u in self._updates.values()]
@@ -352,7 +352,7 @@ class BuildDetails(QObject):
         run_async(lambda: self.api.apply_mod_updates(name, ids), started,
                   lambda msg: self.shell.toast(msg, "err"), owner=self)
 
-    @pyqtSlot(str, "QVariantMap")
+    @Slot(str, "QVariantMap")
     def applyFix(self, action: str, params: dict) -> None:
         name = self._name
 
@@ -374,7 +374,7 @@ class BuildDetails(QObject):
                   lambda msg: self.shell.toast(msg, "err"), owner=self)
 
     # --- «Турбо» ---------------------------------------------------------------------------------
-    @pyqtSlot()
+    @Slot()
     def loadTurbo(self) -> None:
         name = self._name
         self._turbo = {"state": "loading"}
@@ -391,7 +391,7 @@ class BuildDetails(QObject):
 
         run_async(lambda: self.api.turbo_plan(name), self._guard(done), self._guard(failed), owner=self)
 
-    @pyqtSlot(bool)
+    @Slot(bool)
     def applyTurbo(self, tune_jvm: bool) -> None:
         name = self._name
 
@@ -413,7 +413,7 @@ class BuildDetails(QObject):
                   lambda msg: self.shell.toast(msg, "err"), owner=self)
 
     # --- Точки восстановления -----------------------------------------------------------------------
-    @pyqtSlot()
+    @Slot()
     def loadSnapshots(self) -> None:
         name = self._name
 
@@ -426,7 +426,7 @@ class BuildDetails(QObject):
 
         run_async(lambda: self.api.snapshots(name), self._guard(done), lambda msg: logger.warning(msg), owner=self)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def createSnapshot(self, label: str) -> None:
         name = self._name
 
@@ -437,7 +437,7 @@ class BuildDetails(QObject):
         run_async(lambda: self.api.create_snapshot(name, label.strip()), self._guard(done),
                   lambda msg: self.shell.toast(msg, "err"), owner=self)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def restoreSnapshot(self, snap_id: str) -> None:
         name = self._name
 
@@ -450,13 +450,13 @@ class BuildDetails(QObject):
         run_async(lambda: self.api.restore_snapshot(name, snap_id), self._guard(done),
                   lambda msg: self.shell.toast(msg, "err"), owner=self)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def deleteSnapshot(self, snap_id: str) -> None:
         name = self._name
         run_async(lambda: self.api.delete_snapshot(name, snap_id), self._guard(lambda _r: self.loadSnapshots()),
                   lambda msg: self.shell.toast(msg, "err"), owner=self)
 
-    @pyqtSlot()
+    @Slot()
     def shareLog(self) -> None:
         """Публикует последний лог на mclo.gs (токены и IP вычищаются backend) и копирует ссылку."""
         name = self._name
@@ -469,7 +469,7 @@ class BuildDetails(QObject):
 
         run_async(lambda: self.api.share_log(name), done, lambda msg: self.shell.toast(msg, "err"), owner=self)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def deleteWorld(self, world: str) -> None:
         name = self._name
 
@@ -480,7 +480,7 @@ class BuildDetails(QObject):
         run_async(lambda: self.api.delete_world(name, world), self._guard(done),
                   lambda msg: self.shell.toast(msg, "err"), owner=self)
 
-    @pyqtSlot(str, str)
+    @Slot(str, str)
     def exportWorld(self, world: str, url: str) -> None:
         """Мир → .zip (например, чтобы отправить другу или перенести в другую сборку)."""
         name, path = self._name, local_path(url)
@@ -490,7 +490,7 @@ class BuildDetails(QObject):
                   lambda r: self.shell.toast(t("q.world_exported", path=(r or {}).get("path", path))),
                   lambda msg: self.shell.toast(msg, "err"), owner=self)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def importWorld(self, url: str) -> None:
         name = self._name
 

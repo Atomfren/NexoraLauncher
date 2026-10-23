@@ -1,7 +1,7 @@
 """Панели «Доктор Nexora» и «Машина времени» (снимки)."""
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from frontend.utils.worker import run_async
 from frontend.widgets import (

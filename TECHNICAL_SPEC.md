@@ -476,7 +476,7 @@ class MicrosoftLoginCompleteRequest(BaseModel):
 
 | Компонент | Технология | Версия | Обоснование |
 |-----------|------------|--------|-------------|
-| GUI Framework | PyQt6 | ^6.6.0 | Нативный, кроссплатформенный, профессиональный вид |
+| GUI Framework | PySide6 | ^6.11.0 | Нативный, кроссплатформенный, профессиональный вид; LGPL — не требует открытия кода |
 | HTTP Client | aiohttp | ^3.9.0 | Async HTTP для API |
 | Image Processing | Pillow | ^10.2.0 | Обработка изображений |
 | Logging | loguru | ^0.7.0 | Единое логирование |

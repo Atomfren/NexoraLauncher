@@ -11,7 +11,8 @@
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import (
+from PySide6.QtCore import (
+    Property,
     QAbstractListModel,
     QByteArray,
     QModelIndex,
@@ -19,9 +20,8 @@ from PyQt6.QtCore import (
     Qt,
     QTimer,
     QUrl,
-    pyqtProperty,
-    pyqtSignal,
-    pyqtSlot,
+    Signal,
+    Slot,
 )
 
 from frontend.quick import art, fmt
@@ -103,7 +103,7 @@ def build_row(instance: dict, process: dict | None, runtime: dict | None) -> dic
 
 
 class InstancesModel(QAbstractListModel):
-    countChanged = pyqtSignal()
+    countChanged = Signal()
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
@@ -123,7 +123,7 @@ class InstancesModel(QAbstractListModel):
     def roleNames(self) -> dict[int, QByteArray]:
         return {Qt.ItemDataRole.UserRole + 1 + i: QByteArray(name.encode()) for i, name in enumerate(ROLES)}
 
-    @pyqtProperty(int, notify=countChanged)
+    @Property(int, notify=countChanged)
     def count(self) -> int:
         return len(self._rows)
 
@@ -143,24 +143,24 @@ class InstancesModel(QAbstractListModel):
         self.endResetModel()
         self.countChanged.emit()
 
-    @pyqtSlot(str, result=int)
+    @Slot(str, result=int)
     def indexOf(self, name: str) -> int:
         return next((i for i, r in enumerate(self._rows) if r["name"] == name), -1)
 
 
 class Library(QObject):
-    selectedChanged = pyqtSignal()
-    currentChanged = pyqtSignal()
-    totalChanged = pyqtSignal()
-    loadedChanged = pyqtSignal()
+    selectedChanged = Signal()
+    currentChanged = Signal()
+    totalChanged = Signal()
+    loadedChanged = Signal()
     # Игра закрылась (имя сборки, код выхода или -1, если неизвестен)
-    gameExited = pyqtSignal(str, int)
+    gameExited = Signal(str, int)
     # Процесс игры запущен (для «Сворачивать лаунчер при запуске игры»)
-    gameStarted = pyqtSignal(str)
+    gameStarted = Signal(str)
     # Для запуска нужен аккаунт
-    accountRequired = pyqtSignal(str)
+    accountRequired = Signal(str)
     # В сборку поставили контент (из каталога, мастера) — вкладкам пора перечитать
-    contentInstalled = pyqtSignal(str)
+    contentInstalled = Signal(str)
 
     def __init__(self, api: ApiClient, shell: Shell, last_instance: str = "", parent: QObject | None = None):
         super().__init__(parent)
@@ -181,23 +181,23 @@ class Library(QObject):
         self.refresh()
 
     # --- Свойства -------------------------------------------------------------------------------
-    @pyqtProperty(QObject, constant=True)
+    @Property(QObject, constant=True)
     def model(self) -> InstancesModel:
         return self._model
 
-    @pyqtProperty(str, notify=selectedChanged)
+    @Property(str, notify=selectedChanged)
     def selected(self) -> str:
         return self._selected
 
-    @pyqtProperty("QVariantMap", notify=currentChanged)
+    @Property("QVariantMap", notify=currentChanged)
     def current(self) -> dict:
         return self._row(self._selected) or {}
 
-    @pyqtProperty(int, notify=totalChanged)
+    @Property(int, notify=totalChanged)
     def total(self) -> int:
         return len(self._instances)
 
-    @pyqtProperty(bool, notify=loadedChanged)
+    @Property(bool, notify=loadedChanged)
     def loaded(self) -> bool:
         return self._loaded
 
@@ -212,7 +212,7 @@ class Library(QObject):
         self._timer.stop()
         self._busy = True  # новые запросы больше не уходят
 
-    @pyqtSlot()
+    @Slot()
     def refresh(self) -> None:
         if self._busy:
             return
@@ -262,23 +262,23 @@ class Library(QObject):
         self._model.set_rows(rows)
         self.currentChanged.emit()
 
-    @pyqtSlot(result="QVariantList")
+    @Slot(result="QVariantList")
     def entries(self) -> list[dict]:
         """Все сборки без фильтра — для палитры команд."""
         return [{"name": i["name"], "title": i.get("title") or i["name"], "loader": i.get("mod_loader", "vanilla"),
                  "version": i.get("version", "")} for i in self._instances]
 
-    @pyqtSlot(str, result=str)
+    @Slot(str, result=str)
     def titleOf(self, name: str) -> str:
         """Отображаемое имя сборки (для серверов и неизвестных имён — само имя)."""
         return next((i.get("title") or i["name"] for i in self._instances if i["name"] == name), name)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def setQuery(self, query: str) -> None:
         self._query = query.strip()
         self._apply()
 
-    @pyqtSlot(str)
+    @Slot(str)
     def select(self, name: str) -> None:
         if name != self._selected:
             self._selected = name
@@ -332,8 +332,8 @@ class Library(QObject):
 
         run_async(call_checked, started, failed, owner=self)
 
-    @pyqtSlot(str)
-    @pyqtSlot(str, str)
+    @Slot(str)
+    @Slot(str, str)
     def play(self, name: str, server: str = "") -> None:
         host, _, port = server.strip().rpartition(":") if ":" in server else (server.strip(), "", "")
         port_num = int(port) if port.isdigit() else 25565
@@ -344,7 +344,7 @@ class Library(QObject):
 
         self._start_task(name, "launching", lambda: self.api.launch_instance(name, host, port_num), done)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def playWithFriends(self, name: str) -> None:
         """Туннель e4mc для мира и запуск: адрес появится после «Открыть для сети» в игре."""
         def ready(_task: dict) -> None:
@@ -353,17 +353,17 @@ class Library(QObject):
 
         self._start_task(name, "launching", lambda: self.api.prepare_friends(name), ready)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def install(self, name: str) -> None:
         self._start_task(name, "installing", lambda: self.api.prepare_instance(name),
                          lambda _task: self.shell.toast(t("q.installed", name=name)))
 
-    @pyqtSlot(str)
+    @Slot(str)
     def repair(self, name: str) -> None:
         self._start_task(name, "installing", lambda: self.api.prepare_instance(name, force=True),
                          lambda _task: self.shell.toast(t("q.repaired")))
 
-    @pyqtSlot(str)
+    @Slot(str)
     def stop(self, name: str) -> None:
         row = self._row(name)
         if not row or not row["pid"]:
@@ -383,7 +383,7 @@ class Library(QObject):
 
         run_async(call, done, lambda msg: self.shell.toast(msg, "err"), owner=self)
 
-    @pyqtSlot(str, str)
+    @Slot(str, str)
     def rename(self, name: str, new_name: str) -> None:
         """Переименование: допустимое имя меняет и папку, иначе меняется только отображаемое имя."""
         new_name = " ".join(new_name.split())
@@ -400,28 +400,28 @@ class Library(QObject):
             return
         self._mutate(lambda: self.api.rename_instance(name, new_name), t("q.renamed"), new_name)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def duplicate(self, name: str) -> None:
         names = {i["name"] for i in self._instances}
         new_name = next(f"{name} ({n})" for n in range(2, 1000) if f"{name} ({n})" not in names)
         self._mutate(lambda: self.api.duplicate_instance(name, new_name), t("q.duplicated", name=new_name),
                      new_name)
 
-    @pyqtSlot(str, str)
+    @Slot(str, str)
     def setBackground(self, name: str, url: str) -> None:
         from frontend.quick.build import local_path
         path = local_path(url)
         self._mutate(lambda: self.api.set_background(name, path), t("q.background_set"))
 
-    @pyqtSlot(str)
+    @Slot(str)
     def clearBackground(self, name: str) -> None:
         self._mutate(lambda: self.api.clear_background(name), t("q.background_cleared"))
 
-    @pyqtSlot(str)
+    @Slot(str)
     def remove(self, name: str) -> None:
         self._mutate(lambda: self.api.delete_instance(name), t("q.deleted", name=self.titleOf(name)))
 
-    @pyqtSlot(str, str)
+    @Slot(str, str)
     def export(self, name: str, url: str) -> None:
         """Экспорт в .zip (вся сборка) или .mrpack (для Modrinth и друзей) — по расширению файла."""
         from frontend.quick.build import local_path
@@ -435,7 +435,7 @@ class Library(QObject):
                   lambda task: self.shell.tracker.track(task, finished, lambda msg: self.shell.toast(msg, "err")),
                   lambda msg: self.shell.toast(msg, "err"), owner=self)
 
-    @pyqtSlot("QVariantList")
+    @Slot("QVariantList")
     def dropFiles(self, urls: list) -> None:
         """Файлы, брошенные на окно: .jar — в моды выбранной сборки, .zip/.mrpack — импорт новой сборки."""
         from frontend.quick.build import local_path
@@ -466,6 +466,6 @@ class Library(QObject):
         if not jars and not packs:
             self.shell.toast(t("q.drop_unknown"), "err")
 
-    @pyqtSlot(str, "QVariantMap")
+    @Slot(str, "QVariantMap")
     def update(self, name: str, changes: dict) -> None:
         self._mutate(lambda: self.api.update_instance(name, **changes))

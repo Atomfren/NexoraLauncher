@@ -8,8 +8,8 @@
 import colorsys
 import math
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QImage, QPainter
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QImage, QPainter
 
 _U32 = 0xFFFFFFFF
 

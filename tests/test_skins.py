@@ -10,8 +10,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 def _png(width: int, height: int, color: str = "#3366cc") -> bytes:
-    from PyQt6.QtCore import QBuffer, QIODevice
-    from PyQt6.QtGui import QColor, QImage
+    from PySide6.QtCore import QBuffer, QIODevice
+    from PySide6.QtGui import QColor, QImage
     image = QImage(width, height, QImage.Format.Format_ARGB32)
     image.fill(QColor(color))
     buffer = QBuffer()
@@ -22,7 +22,7 @@ def _png(width: int, height: int, color: str = "#3366cc") -> bytes:
 
 @pytest.fixture
 def gui():
-    from PyQt6.QtGui import QGuiApplication
+    from PySide6.QtGui import QGuiApplication
     return QGuiApplication.instance() or QGuiApplication(sys.argv)
 
 
@@ -96,7 +96,7 @@ def test_mojang_textures_cached(client, monkeypatch, gui):
 
 def test_skin_view_renders_model_and_cape(gui, tmp_path):
     """Модель рисуется; плащ виден сзади и не просвечивает спереди."""
-    from PyQt6.QtGui import QColor, QImage, QPainter
+    from PySide6.QtGui import QColor, QImage, QPainter
 
     from frontend.quick.skinview import SkinView
     skin, cape = tmp_path / "s.png", tmp_path / "c.png"

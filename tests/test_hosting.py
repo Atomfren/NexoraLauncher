@@ -338,10 +338,10 @@ def test_unsupported_core_version_and_vanilla(client, wait_task, paper_env, monk
 
 def test_quick_own_server_settings_and_mods(client, wait_task, fake_server_env, monkeypatch):
     """QML «Сеть → свой сервер»: настройки server.properties и список модов с удалением."""
-    pytest.importorskip("PyQt6.QtQuick")
+    pytest.importorskip("PySide6.QtQuick")
     import os
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
     from test_quick_ui import _pump_until
 
     from frontend.backend_runner import EmbeddedBackend

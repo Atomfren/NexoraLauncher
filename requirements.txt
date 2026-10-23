@@ -14,7 +14,7 @@ cryptography>=42.0
 loguru>=0.7,<1.0
 
 # GUI
-PyQt6>=6.6,<7.0
+PySide6-Essentials>=6.11,<6.13
 
 # Опционально: локальный AI-помощник (нужен компилятор C++ или готовое колесо)
 # llama-cpp-python>=0.2.0

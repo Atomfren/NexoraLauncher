@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from PySide6.QtCore import QObject, QTimer, Signal
 
 from frontend.services.api_client import ApiClient
 from frontend.utils.worker import run_async
@@ -14,9 +14,9 @@ class TaskTracker(QObject):
     """Опрашивает активные задачи и сообщает об их прогрессе/завершении."""
 
     # Список активных задач (для индикатора в статус-баре)
-    tasks_changed = pyqtSignal(list)
+    tasks_changed = Signal(list)
     # Завершённая задача (done / failed / cancelled)
-    task_finished = pyqtSignal(dict)
+    task_finished = Signal(dict)
 
     def __init__(self, api: ApiClient, parent: QObject | None = None):
         super().__init__(parent)

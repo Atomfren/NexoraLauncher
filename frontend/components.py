@@ -1,7 +1,7 @@
 """Переиспользуемые компоненты: запуск инстанса, карточка инстанса."""
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QVBoxLayout, QWidget
 
 from frontend.services.api_client import ApiError
 from frontend.utils.worker import run_async
@@ -151,8 +151,8 @@ class InstanceCard(Card):
         self.play_btn.setText(t("instance.launching"))
 
         def finished(_ok: bool) -> None:
-            from PyQt6 import sip
-            if not sip.isdeleted(self.play_btn):
+            import shiboken6
+            if shiboken6.isValid(self.play_btn):
                 self.play_btn.setEnabled(True)
                 self._update_play_button()
 

@@ -12,8 +12,8 @@ import traceback
 from collections.abc import Callable
 from typing import Any
 
-from PyQt6 import sip
-from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal
+import shiboken6
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
 from frontend.utils.logger import logger
 
@@ -29,7 +29,7 @@ def _pool(background: bool) -> QThreadPool:
     global _background_pool
     if background:
         # Пул без родителя может быть удалён на стороне C++ (например, вместе с прежним окном) — создаём заново
-        if _background_pool is None or sip.isdeleted(_background_pool):
+        if _background_pool is None or not shiboken6.isValid(_background_pool):
             _background_pool = QThreadPool()
             _background_pool.setMaxThreadCount(_BACKGROUND_THREADS)
         return _background_pool
@@ -40,8 +40,8 @@ def _pool(background: bool) -> QThreadPool:
 
 
 class _Signals(QObject):
-    done = pyqtSignal(object)
-    failed = pyqtSignal(str)
+    done = Signal(object)
+    failed = Signal(str)
 
 
 class _Job(QRunnable):
@@ -62,7 +62,7 @@ class _Job(QRunnable):
 
 
 def _alive(owner: QObject | None) -> bool:
-    return owner is None or not sip.isdeleted(owner)
+    return owner is None or shiboken6.isValid(owner)
 
 
 def run_async(

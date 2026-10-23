@@ -2,9 +2,9 @@
 
 import base64
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPixmap
-from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QVBoxLayout
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QVBoxLayout
 
 from frontend.utils.worker import run_async
 from frontend.widgets import (

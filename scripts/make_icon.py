@@ -1,4 +1,4 @@
-"""Генерирует иконку приложения resources/icon.png и icon.ico (нужен PyQt6): пиксельная кирка 16x16.
+"""Генерирует иконку приложения resources/icon.png и icon.ico (нужен PySide6): пиксельная кирка 16x16.
 
 Запуск: python scripts/make_icon.py [папка]   (по умолчанию resources/)
 Рисунок задаётся ниже по клеткам; размеры кратны 16, поэтому пиксели остаются чёткими.
@@ -11,8 +11,8 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import QBuffer, QIODevice, Qt  # noqa: E402
-from PyQt6.QtGui import QColor, QGuiApplication, QImage  # noqa: E402
+from PySide6.QtCore import QBuffer, QIODevice, Qt  # noqa: E402
+from PySide6.QtGui import QColor, QGuiApplication, QImage  # noqa: E402
 
 OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent / "resources"
 ICO_SIZES = [16, 32, 48, 64, 128, 256]

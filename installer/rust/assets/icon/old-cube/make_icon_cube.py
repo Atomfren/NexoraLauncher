@@ -1,4 +1,4 @@
-"""Генерирует иконку приложения resources/icon.png и icon.ico (нужен PyQt6).
+"""Генерирует иконку приложения resources/icon.png и icon.ico (нужен PySide6).
 
 Запуск: python scripts/make_icon.py
 """
@@ -9,8 +9,8 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import QPointF, QRectF, Qt  # noqa: E402
-from PyQt6.QtGui import (  # noqa: E402,E501
+from PySide6.QtCore import QPointF, QRectF, Qt  # noqa: E402
+from PySide6.QtGui import (  # noqa: E402,E501
     QBrush,
     QColor,
     QGuiApplication,
@@ -74,7 +74,7 @@ def main() -> int:
     # .ico с несколькими размерами собираем вручную (PNG внутри ICO поддерживается Windows Vista+)
     import struct
 
-    from PyQt6.QtCore import QBuffer, QIODevice
+    from PySide6.QtCore import QBuffer, QIODevice
     sizes = [16, 24, 32, 48, 64, 128, 256]
     blobs = []
     for size in sizes:

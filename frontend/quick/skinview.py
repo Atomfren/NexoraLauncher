@@ -11,9 +11,9 @@
 import math
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtProperty, pyqtSignal
-from PyQt6.QtGui import QColor, QImage, QPainter, QRadialGradient, QTransform
-from PyQt6.QtQuick import QQuickPaintedItem
+from PySide6.QtCore import Property, QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QImage, QPainter, QRadialGradient, QTransform
+from PySide6.QtQuick import QQuickPaintedItem
 
 Vec = tuple[float, float, float]
 
@@ -125,12 +125,12 @@ class SkinView(QQuickPaintedItem):
     """QML: ``NxSkinView { skin: "C:/…/skin.png"; cape: "…"; slim: false; yaw: 20; time: t }``."""
 
     # Отдельный сигнал на каждое свойство: с общим сигналом привязка yaw к time давала цикл
-    skinChanged = pyqtSignal()
-    capeChanged = pyqtSignal()
-    slimChanged = pyqtSignal()
-    yawChanged = pyqtSignal()
-    pitchChanged = pyqtSignal()
-    timeChanged = pyqtSignal()
+    skinChanged = Signal()
+    capeChanged = Signal()
+    slimChanged = Signal()
+    yawChanged = Signal()
+    pitchChanged = Signal()
+    timeChanged = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -149,7 +149,7 @@ class SkinView(QQuickPaintedItem):
             signal.connect(self.update)
 
     # --- Свойства --------------------------------------------------------------------------------
-    @pyqtProperty(str, notify=skinChanged)
+    @Property(str, notify=skinChanged)
     def skin(self) -> str:
         return self._skin_path
 
@@ -165,7 +165,7 @@ class SkinView(QQuickPaintedItem):
             self._skin, self._legacy = QImage(), False
         self.skinChanged.emit()
 
-    @pyqtProperty(str, notify=capeChanged)
+    @Property(str, notify=capeChanged)
     def cape(self) -> str:
         return self._cape_path
 
@@ -178,7 +178,7 @@ class SkinView(QQuickPaintedItem):
         self._cape = image.convertToFormat(QImage.Format.Format_ARGB32) if not image.isNull() else QImage()
         self.capeChanged.emit()
 
-    @pyqtProperty(bool, notify=slimChanged)
+    @Property(bool, notify=slimChanged)
     def slim(self) -> bool:
         return self._slim
 
@@ -188,7 +188,7 @@ class SkinView(QQuickPaintedItem):
             self._slim = value
             self.slimChanged.emit()
 
-    @pyqtProperty(float, notify=yawChanged)
+    @Property(float, notify=yawChanged)
     def yaw(self) -> float:
         return self._yaw
 
@@ -198,7 +198,7 @@ class SkinView(QQuickPaintedItem):
             self._yaw = value
             self.yawChanged.emit()
 
-    @pyqtProperty(float, notify=pitchChanged)
+    @Property(float, notify=pitchChanged)
     def pitch(self) -> float:
         return self._pitch
 
@@ -208,7 +208,7 @@ class SkinView(QQuickPaintedItem):
             self._pitch = value
             self.pitchChanged.emit()
 
-    @pyqtProperty(float, notify=timeChanged)
+    @Property(float, notify=timeChanged)
     def time(self) -> float:
         """Фаза покачивания рук и плаща (обычно анимируется из QML)."""
         return self._time
@@ -219,7 +219,7 @@ class SkinView(QQuickPaintedItem):
             self._time = value
             self.timeChanged.emit()
 
-    @pyqtProperty(bool, notify=skinChanged)
+    @Property(bool, notify=skinChanged)
     def ready(self) -> bool:
         return not self._skin.isNull()
 

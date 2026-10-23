@@ -1,7 +1,7 @@
 """Диалоги «Своего сервера»: создание, консоль, настройки, моды."""
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
@@ -459,7 +459,7 @@ class ServerBackupsDialog(QDialog):
 
 def show_address_dialog(parent, title: str, address: str, text: str) -> None:
     """Окно с публичным адресом и кнопкой копирования."""
-    from PyQt6.QtGui import QGuiApplication
+    from PySide6.QtGui import QGuiApplication
 
     dialog = QDialog(parent)
     dialog.setWindowTitle(title)

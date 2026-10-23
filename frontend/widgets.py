@@ -4,9 +4,9 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QSize, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QDesktopServices, QIcon, QImage, QPixmap
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QObject, QSize, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QIcon, QImage, QPixmap
+from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
     QHBoxLayout,
@@ -228,10 +228,10 @@ class Page(QWidget):
 class AppContext(QObject):
     """Общие сервисы, доступные всем страницам."""
 
-    instances_changed = pyqtSignal()
-    accounts_changed = pyqtSignal()
-    settings_changed = pyqtSignal(dict)
-    navigate = pyqtSignal(str, dict)
+    instances_changed = Signal()
+    accounts_changed = Signal()
+    settings_changed = Signal(dict)
+    navigate = Signal(str, dict)
 
     def __init__(self, api: ApiClient, tracker, parent: QObject | None = None):
         super().__init__(parent)
@@ -289,8 +289,8 @@ class IconCache(QObject):
 
     @staticmethod
     def _apply(target: QLabel, pixmap: QPixmap, size: int) -> None:
-        from PyQt6 import sip
-        if sip.isdeleted(target):
+        import shiboken6
+        if not shiboken6.isValid(target):
             return
         target.setPixmap(pixmap.scaled(QSize(size, size), Qt.AspectRatioMode.KeepAspectRatio,
                                        Qt.TransformationMode.SmoothTransformation))

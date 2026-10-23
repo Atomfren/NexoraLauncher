@@ -1,1 +1,1 @@
-"""Frontend — GUI клиент NexoraLauncher (PyQt6)."""
+"""Frontend — GUI клиент NexoraLauncher (PySide6)."""

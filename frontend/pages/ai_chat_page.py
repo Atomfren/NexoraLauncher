@@ -2,8 +2,8 @@
 
 from html import escape
 
-from PyQt6.QtCore import QThread, pyqtSignal
-from PyQt6.QtWidgets import QHBoxLayout, QLineEdit, QTextBrowser
+from PySide6.QtCore import QThread, Signal
+from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QTextBrowser
 
 from frontend.services.api_client import ApiClient
 from frontend.widgets import AppContext, Page, button, label, open_path
@@ -13,8 +13,8 @@ from shared.i18n import t
 class ChatStream(QThread):
     """Читает потоковый ответ AI и отдаёт токены в GUI-поток."""
 
-    token = pyqtSignal(str)
-    failed = pyqtSignal(str)
+    token = Signal(str)
+    failed = Signal(str)
 
     def __init__(self, api: ApiClient, text: str, history: list[dict]):
         super().__init__()

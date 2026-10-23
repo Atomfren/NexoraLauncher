@@ -4,8 +4,8 @@
 ``setObjectName("Card")``, ``setProperty("variant", "primary")`` и т.д.
 """
 
-from PyQt6.QtGui import QColor, QPalette
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtGui import QColor, QPalette
+from PySide6.QtWidgets import QApplication
 
 PALETTES = {
     "dark": {
