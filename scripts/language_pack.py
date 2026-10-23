@@ -123,8 +123,11 @@ def cmd_index(args: argparse.Namespace) -> None:
                         "author": str(pack.get("author", "")), "file": path.name, "size": len(raw),
                         "sha256": sha256(raw), "translated": len(pack["strings"]), "total": total})
         print(f"  {pack['code']}: {pack['name']}, {len(pack['strings'])} из {total}")
+    if not entries and not args.allow_empty:
+        raise SystemExit(f"В {folder} нет пригодных языковых пакетов "
+                         f"(--allow-empty, если нужен пустой список для сайта)")
     if not entries:
-        raise SystemExit(f"В {folder} нет пригодных языковых пакетов")
+        print("  пакетов нет — список будет пустым; лаунчер покажет «Новых языков пока нет»")
 
     index = {"generated": date.today().isoformat(), "languages": entries}
     raw = (json.dumps(index, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
@@ -159,6 +162,7 @@ def main() -> None:
     index = commands.add_parser("index", help="собрать и подписать список для сайта")
     index.add_argument("folder", help="папка с пакетами")
     index.add_argument("--key", default="", help="закрытый ключ (иначе NEXORA_RELEASE_KEY)")
+    index.add_argument("--allow-empty", action="store_true", help="подписать пустой список (языков ещё нет)")
     index.set_defaults(func=cmd_index)
 
     args = parser.parse_args()

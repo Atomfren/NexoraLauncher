@@ -4,6 +4,7 @@
 """
 
 import json
+import time
 from collections.abc import Iterator
 from typing import Any
 from urllib.parse import quote
@@ -11,6 +12,8 @@ from urllib.parse import quote
 import httpx
 
 TOKEN_HEADER = "X-Nexora-Token"
+# Сколько ждать backend, который ещё поднимается: окно открывается раньше него
+_STARTUP_GRACE = 30.0
 
 
 class ApiError(Exception):
@@ -38,6 +41,9 @@ class ApiClient:
         # Отдельный клиент для внешних ресурсов (иконки): без токена, с пулом соединений
         self._external = httpx.Client(timeout=httpx.Timeout(15.0, connect=5.0), follow_redirects=True,
                                       limits=httpx.Limits(max_connections=6))
+        # Пока ни один запрос не прошёл, «отказано в соединении» означает «backend ещё поднимается»
+        self._ready = False
+        self._created_at = time.monotonic()
 
     def close(self) -> None:
         self._http.close()
@@ -45,12 +51,21 @@ class ApiClient:
 
     # --- Базовые запросы --------------------------------------------------------
     def request(self, method: str, path: str, **kwargs) -> Any:
-        try:
-            resp = self._http.request(method, path, **kwargs)
-        except httpx.TimeoutException as e:
-            raise ApiError("Превышено время ожидания ответа backend") from e
-        except httpx.HTTPError as e:
-            raise ApiError(f"Нет связи с backend: {e}") from e
+        while True:
+            try:
+                resp = self._http.request(method, path, **kwargs)
+                self._ready = True
+                break
+            except httpx.ConnectError as e:
+                # Окно открывается раньше, чем поднимется backend: первые запросы ждут его,
+                # а не падают с ошибкой. Запросы идут из фоновых потоков, интерфейс не замирает.
+                if self._ready or time.monotonic() - self._created_at > _STARTUP_GRACE:
+                    raise ApiError(f"Нет связи с backend: {e}") from e
+                time.sleep(0.05)
+            except httpx.TimeoutException as e:
+                raise ApiError("Превышено время ожидания ответа backend") from e
+            except httpx.HTTPError as e:
+                raise ApiError(f"Нет связи с backend: {e}") from e
         if resp.status_code == 204 or not resp.content:
             if resp.status_code >= 400:
                 raise ApiError(f"HTTP {resp.status_code}", resp.status_code)

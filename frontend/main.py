@@ -9,6 +9,7 @@
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
 
 _project_root = Path(__file__).resolve().parent.parent
@@ -76,7 +77,32 @@ def self_test() -> int:
     return 0
 
 
+def _watch_backend(backend, timeout: float = 30.0) -> None:
+    """Следит, поднялся ли backend. Если нет — говорит об этом, а не оставляет пустое окно.
+
+    Проверка идёт по таймеру в GUI-потоке: сам backend уже работает в своём.
+    """
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QMessageBox
+
+    deadline = time.monotonic() + timeout
+
+    def check() -> None:
+        if backend.ready:
+            return
+        if backend.error is not None or time.monotonic() > deadline:
+            reason = backend.error or "не ответил за 30 секунд"
+            logger.error(f"Backend не поднялся: {reason}")
+            QMessageBox.critical(None, APP_NAME,
+                                 f"Не удалось запустить backend:\n{reason}\n\nСмотрите backend.log")
+            return
+        QTimer.singleShot(200, check)
+
+    QTimer.singleShot(200, check)
+
+
 def main(argv: list[str] | None = None) -> int:
+    started_at = time.monotonic()
     args = parse_args(argv)
     ensure_directories()
     setup_logging(args.debug)
@@ -113,19 +139,12 @@ def main(argv: list[str] | None = None) -> int:
     else:
         from frontend.backend_runner import EmbeddedBackend
         backend = EmbeddedBackend()
-        try:
-            backend.start()
-        except Exception as e:  # noqa: BLE001 — показываем пользователю и выходим
-            logger.exception("Не удалось запустить backend")
-            QMessageBox.critical(None, APP_NAME, f"Не удалось запустить backend:\n{e}")
-            return 1
+        # Backend поднимается в своём потоке, окно его не ждёт: на импорт FastAPI и клиентов
+        # уходят секунды, а интерфейсу они не нужны. Первые запросы подождут его сами
+        # (ApiClient), а если он не поднимется — скажет сторож ниже.
+        backend.start_async()
         api = ApiClient(backend.base_url, backend.token)
-
-    try:
-        api.health()
-    except Exception as e:  # noqa: BLE001
-        QMessageBox.critical(None, APP_NAME, f"Backend недоступен:\n{e}")
-        return 1
+        _watch_backend(backend)
 
     if args.ui == "quick":
         from frontend.quick.app import QuickUi
@@ -137,6 +156,8 @@ def main(argv: list[str] | None = None) -> int:
         from frontend.app import MainWindow
         window = MainWindow(api)
         window.show()
+    # Время до окна видно в журнале: по жалобам «долго открывается» сразу понятно, сколько это в цифрах
+    logger.info(f"Окно открыто за {int((time.monotonic() - started_at) * 1000)} мс")
     code = app.exec()
 
     if args.ui == "quick":
