@@ -1,4 +1,4 @@
-# Сборка установщика Nexora.
+﻿# Сборка установщика Nexora.
 #   powershell -ExecutionPolicy Bypass -File installer\rust\build.ps1 -Version 1.5.0 [-App <папка dist\NexoraLauncher>] [-Out <exe>]
 # Сначала нужно собрать сам лаунчер: python scripts/build.py (появится dist\NexoraLauncher).
 param(
