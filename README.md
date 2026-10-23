@@ -1,7 +1,7 @@
 # NexoraLauncher
 
 Лаунчер Minecraft: Java Edition с отдельными инстансами, загрузчиками модов и каталогом Modrinth.
-Backend на FastAPI, интерфейс на Qt Quick (QML, PyQt6).
+Backend на FastAPI, интерфейс на Qt Quick (QML, PySide6).
 
 **Версия 1.5.0 «Всё на своих местах»** · Windows / Linux / macOS · Python 3.11+ · GPL-3.0
 
@@ -18,7 +18,7 @@ Backend на FastAPI, интерфейс на Qt Quick (QML, PyQt6).
 - **🚀 Турбо.** Одна кнопка ставит проверенные моды-оптимизации под ваш загрузчик и настраивает память и сборщик мусора Java.
 - **📤 Поделиться.** Экспорт сборки в `.mrpack`: файл весит килобайты и открывается в Modrinth App и Prism Launcher.
 - **📥 Переезд за минуту.** Лаунчер сам находит сборки Prism Launcher, MultiMC и CurseForge и переносит их со всеми модами, конфигами и мирами.
-- **⬆ Автообновление.** Новые версии с GitHub ставятся одной кнопкой.
+- **⬆ Автообновление.** Новые версии с сайта ставятся одной кнопкой. Манифест выпуска подписан ключом Ed25519, архив сверяется по SHA-256 — подменённое обновление лаунчер не поставит.
 
 ### Основное
 
@@ -103,10 +103,44 @@ backend/        FastAPI: api/v1 (эндпоинты), core (бизнес-лог�
 frontend/       quick/ — интерфейс на QML (основной); app.py, pages/, dialogs/ — прежний (--ui classic)
 shared/         paths, config, crypto, i18n, fsutil, version
 tests/          pytest: API, установка/запуск (с заглушками), контент, i18n, GUI smoke
-scripts/        build.py (PyInstaller), make_icon.py
+scripts/        build.py (PyInstaller), sign_release.py (манифест обновления),
+                language_pack.py (языки для сайта), make_icon.py
 installer/      rust/ — собственный установщик и деинсталлятор (Rust, egui); nexora.iss — прежний на Inno Setup
 resources/      иконки
 ```
+
+### Выпуск новой версии
+
+Лаунчер обновляется из своего канала: рядом со сборкой лежит `latest.json` (версия, имена файлов,
+размеры, SHA-256) и его подпись `latest.json.sig`. Открытый ключ Ed25519 вшит в программу
+(`shared/version.py`, `UPDATE_PUBLIC_KEY`), закрытый хранится только у выпускающего и в секрете CI
+`NEXORA_RELEASE_KEY`. Лаунчер берёт манифест с `https://nexoralauncher.ru/downloads/latest.json`,
+а если сайт недоступен — из последнего релиза GitHub; подпись проверяется в обоих случаях,
+и уже из подписанного манифеста берётся SHA-256 архива.
+
+```bash
+python scripts/sign_release.py keygen --out release_key.pem   # один раз: пара ключей
+python scripts/sign_release.py sign dist --version 1.5.1 --key release_key.pem --notes CHANGELOG.md
+python scripts/sign_release.py verify dist/latest.json        # проверить тем же кодом, что и лаунчер
+```
+
+Файлы `latest.json` и `latest.json.sig` выкладываются рядом с архивом: на сайт
+(`nexora-site/tools/publish_release.py` переносит их без изменений) и в релиз GitHub (это делает CI).
+
+### Языки, которые докачиваются с сайта
+
+В сборку встроены русский и английский. Остальные переводы лежат на сайте в `languages/` и ставятся
+из Настроек → «Языки». Список `languages.json` подписан тем же ключом, а SHA-256 каждого пакета берётся
+из подписанного списка, поэтому подменить перевод по дороге нельзя.
+
+```bash
+python scripts/language_pack.py template --code uk --name "Українська" --out uk.json   # шаблон переводчику
+python scripts/language_pack.py build uk.json --out ../nexora-site/languages/          # проверить и собрать
+python scripts/language_pack.py index ../nexora-site/languages/ --key release_key.pem  # подписать список
+```
+
+`build` не пропустит пакет с лишними ключами или с испорченными подстановками вида `{name}`;
+непереведённые строки можно оставить пустыми — лаунчер покажет их по-английски.
 
 ## Лицензия
 

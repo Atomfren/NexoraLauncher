@@ -33,3 +33,7 @@ graphify-out/
 
 # Установщик на Rust
 installer/rust/target/
+
+# Ключ подписи обновлений (хранится вне репозитория)
+*.pem
+release_key*

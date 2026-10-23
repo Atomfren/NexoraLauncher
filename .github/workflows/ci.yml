@@ -24,7 +24,7 @@ jobs:
           cache: pip
       - name: Системные библиотеки Qt (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libxcb-cursor0
       - run: pip install -r requirements-dev.txt
       - run: ruff check .
       - run: pytest --cov --cov-report=term
@@ -83,13 +83,27 @@ jobs:
           if (Test-Path "$dir\NexoraLauncher.exe") { throw "удаление не убрало файлы" }
           if (Test-Path $key) { throw "после удаления осталась запись в реестре" }
         shell: pwsh
+      # Манифест обновления и подпись к нему. Закрытый ключ — в секрете NEXORA_RELEASE_KEY
+      # (содержимое release_key.pem целиком). Без секрета релиз не публикуется: лаунчеры
+      # всё равно отвергли бы неподписанный манифест.
+      - name: Подпись манифеста
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          NEXORA_RELEASE_KEY: ${{ secrets.NEXORA_RELEASE_KEY }}
+        run: |
+          if (-not $env:NEXORA_RELEASE_KEY) { throw "нет секрета NEXORA_RELEASE_KEY — подписать выпуск нечем" }
+          python scripts/sign_release.py sign dist --version $env:VERSION --page "https://nexoralauncher.ru"
+          python scripts/sign_release.py verify dist/latest.json
+        shell: pwsh
       - uses: actions/upload-artifact@v4
         with:
           name: NexoraLauncher-windows
           path: |
             dist/*.zip
             dist/*-setup.exe
-      # Тег vX.Y.Z → релиз на GitHub: из него лаунчер скачивает автообновление
+            dist/latest.json
+            dist/latest.json.sig
+      # Тег vX.Y.Z → релиз на GitHub: запасной адрес автообновления (основной — nexoralauncher.ru)
       - name: Релиз
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -97,4 +111,6 @@ jobs:
           files: |
             dist/*.zip
             dist/*-setup.exe
+            dist/latest.json
+            dist/latest.json.sig
           generate_release_notes: true
