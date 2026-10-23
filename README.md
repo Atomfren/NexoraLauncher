@@ -3,7 +3,7 @@
 Лаунчер Minecraft: Java Edition с отдельными инстансами, загрузчиками модов и каталогом Modrinth.
 Backend на FastAPI, интерфейс на Qt Quick (QML, PySide6).
 
-**Версия 1.5.0 «Всё на своих местах»** · Windows / Linux / macOS · Python 3.11+ · GPL-3.0
+**Версия 1.5.1 «Своими силами»** · Windows / Linux / macOS · Python 3.11+ · GPL-3.0
 
 ## Возможности
 
@@ -93,7 +93,7 @@ pip install -r requirements-dev.txt
 ruff check .                    # линтер
 pytest --cov                    # тесты (backend, shared, smoke-тест GUI)
 python scripts/build.py         # сборка dist/NexoraLauncher + zip
-powershell -ExecutionPolicy Bypass -File installer/rust/build.ps1 -Version 1.5.0   # установщик setup.exe (нужен Rust)
+powershell -ExecutionPolicy Bypass -File installer/rust/build.ps1 -Version 1.5.1   # установщик setup.exe (нужен Rust)
 ```
 
 Структура проекта:

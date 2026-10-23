@@ -2,7 +2,7 @@
 
 APP_NAME = "NexoraLauncher"
 APP_ID = "nexoralauncher"
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.5.1"
 # Сайт лаунчера: на него ведёт логотип в углу окна
 WEBSITE_URL = "https://nexoralauncher.ru"
 USER_AGENT = f"Atomfren/{APP_NAME}/{APP_VERSION} (nexoralauncher.ru)"
