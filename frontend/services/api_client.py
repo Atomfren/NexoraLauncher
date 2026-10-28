@@ -245,6 +245,18 @@ class ApiClient:
     def apply_fix(self, instance: str, action: str, params: dict) -> dict:
         return self.post(f"/instances/{_q(instance)}/doctor/fix", {"action": action, "params": params})
 
+    def crash_signature(self, instance: str, helped: bool | None = None, fix: str = "") -> dict:
+        """Отпечаток вылета для показа человеку. Ничего не отправляет наружу."""
+        params = {"fix": fix}
+        if helped is not None:
+            params["helped"] = "true" if helped else "false"
+        return self.request("GET", f"/instances/{_q(instance)}/doctor/signature", timeout=60, params=params)
+
+    def send_crash_signature(self, instance: str, helped: bool | None = None, fix: str = "") -> dict:
+        """Отправляет отпечаток. ``consent`` всегда true: сюда приходят только после согласия."""
+        return self.request("POST", f"/instances/{_q(instance)}/doctor/signature", timeout=60,
+                            json={"consent": True, "helped": helped, "fix": fix})
+
     def snapshots(self, instance: str) -> list[dict]:
         return self.get(f"/instances/{_q(instance)}/snapshots")
 

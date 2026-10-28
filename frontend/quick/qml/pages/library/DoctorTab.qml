@@ -67,7 +67,8 @@ Item {
             NxButton {
                 visible: root.bad && !!root.v.fixAction
                 text: root.v.fixLabel || I18n.t("q.fix")
-                onClicked: Build.applyFix(root.v.fixAction, root.v.fixParams || {})
+                // После исправления спрашиваем «помогло?» — ответ пригодится Доктору
+                onClicked: { Build.applyFix(root.v.fixAction, root.v.fixParams || {}); Crash.askHelped(root.v.fixAction) }
             }
             NxButton {
                 visible: (root.v.issues || []).length > 1
@@ -78,11 +79,38 @@ Item {
         }
     }
 
+    // «Помогло?» — спрашиваем после применённого исправления. Ответ уходит только с согласием.
+    Rectangle {
+        id: ask
+        visible: Crash.report.state === "ask"
+        x: 32
+        anchors.top: bar.bottom
+        anchors.topMargin: visible ? 12 : 0
+        width: parent.width - 64
+        height: visible ? 48 : 0
+        radius: NxTheme.rButton
+        color: NxTheme.fill1
+        NxText {
+            x: 16
+            anchors.verticalCenter: parent.verticalCenter
+            text: I18n.t("q.crash_helped_question")
+            variant: "strong"
+        }
+        Row {
+            anchors.right: parent.right; anchors.rightMargin: 12
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 8
+            NxButton { small: true; text: I18n.t("q.crash_helped_yes"); onClicked: Crash.prepare(1) }
+            NxButton { small: true; variant: "ghost"; text: I18n.t("q.crash_helped_no"); onClicked: Crash.prepare(0) }
+            NxIconButton { iconName: "x"; tip: I18n.t("common.close"); onClicked: Crash.dismiss() }
+        }
+    }
+
     // Управление
     Flow {
         id: ctl
         x: 32
-        anchors.top: bar.bottom
+        anchors.top: ask.visible ? ask.bottom : bar.bottom
         anchors.topMargin: 16
         width: parent.width - 64
         spacing: 12
@@ -108,6 +136,7 @@ Item {
         NxTextField { width: 200; iconName: "search"; placeholder: I18n.t("q.search_log"); onEdited: Logs.setQuery(text) }
         NxIconButton { iconName: "refresh"; tip: I18n.t("q.recheck"); onClicked: { Logs.reload(Logs.source); Build.reloadVerdict() } }
         NxButton { variant: "ghost"; iconName: "share"; text: I18n.t("q.share_log"); onClicked: Build.shareLog() }
+        NxButton { variant: "ghost"; iconName: "lightbulb"; text: I18n.t("q.crash_help"); onClicked: Crash.prepare(-1) }
     }
 
     NxText {
@@ -255,6 +284,74 @@ Item {
         NxSpinner { visible: Logs.loading; anchors.centerIn: parent; color: NxTheme.muted }
     }
 
+    // Согласие на отправку отпечатка вылета: сначала показываем ровно то, что уйдёт
+    Connections {
+        target: Crash
+        function onChanged() {
+            const state = Crash.report.state
+            if (state === "loading" || state === "ready" || state === "error") consent.open()
+            else consent.close()
+        }
+    }
+
+    NxModal {
+        id: consent
+        width: 560
+        title: I18n.t("q.crash_consent_title")
+        acceptText: I18n.t("q.crash_send")
+        acceptEnabled: Crash.report.state === "ready"
+        busy: Crash.report.state === "loading" || Crash.report.state === "sending"
+        onAccepted: Crash.send()
+        // Закрыли окно, не нажав «Отправить» — значит, не отправляем
+        onClosed: if (Crash.report.state === "ready" || Crash.report.state === "error") Crash.dismiss()
+
+        NxText {
+            width: consent.fieldWidth
+            text: I18n.t("q.crash_consent_body")
+            muted: true
+            wrapMode: Text.Wrap
+            elide: Text.ElideNone
+        }
+        NxText {
+            visible: (Crash.report.helped !== undefined && Crash.report.helped >= 0)
+            width: consent.fieldWidth
+            text: I18n.t("q.crash_helped_hint")
+            muted: true
+            wrapMode: Text.Wrap
+            elide: Text.ElideNone
+        }
+        Rectangle {
+            visible: Crash.report.state !== "error"
+            width: consent.fieldWidth
+            height: 240
+            radius: 4
+            color: NxTheme.surface1
+            clip: true
+            C.ScrollView {
+                anchors.fill: parent
+                anchors.margins: 10
+                C.ScrollBar.vertical: NxScrollBar {}
+                TextEdit {
+                    readOnly: true
+                    selectByMouse: true
+                    text: Crash.report.text || ""
+                    color: NxTheme.text
+                    selectionColor: Qt.rgba(NxTheme.accent.r, NxTheme.accent.g, NxTheme.accent.b, 0.35)
+                    font.family: NxTheme.fontMono
+                    font.pixelSize: 12
+                    wrapMode: Text.WrapAnywhere
+                }
+            }
+        }
+        NxText {
+            visible: Crash.report.state === "error"
+            width: consent.fieldWidth
+            text: Crash.report.error || ""
+            wrapMode: Text.Wrap
+            elide: Text.ElideNone
+        }
+    }
+
     // Все проблемы Доктора
     NxDrawer {
         id: problems
@@ -286,7 +383,7 @@ Item {
                                 required property var modelData
                                 small: true
                                 text: modelData.label
-                                onClicked: Build.applyFix(modelData.action, modelData.params || {})
+                                onClicked: { Build.applyFix(modelData.action, modelData.params || {}); Crash.askHelped(modelData.action) }
                             }
                         }
                     }

@@ -7,7 +7,7 @@ from fastapi import APIRouter, status
 from pydantic import BaseModel, Field
 
 from backend.api.v1.tasks import TaskResponse
-from backend.core import doctor, snapshots, updates
+from backend.core import crash_signature, doctor, snapshots, updates
 from backend.core.instance import InstanceManager
 from backend.core.pack_manager import PackManager
 from backend.core.tasks import task_manager
@@ -19,6 +19,16 @@ class FixRequest(BaseModel):
     action: str = Field(..., pattern="^(install_mod|disable_mod|remove_mod|set_memory|reset_java|repair|"
                                      "update_loader)$")
     params: dict[str, Any] = {}
+
+
+class CrashSignatureRequest(BaseModel):
+    """Отправка отпечатка вылета. ``consent`` ставит сам человек в окне подтверждения:
+    без него сервер лаунчера отказывает, тихой отправки нет."""
+
+    consent: bool = False
+    source: str = ""
+    helped: bool | None = None
+    fix: str = Field("", max_length=40)
 
 
 class SnapshotRequest(BaseModel):
@@ -59,6 +69,18 @@ def apply_fix(name: str, request: FixRequest):
     InstanceManager.get(name)
     return task_manager.submit("doctor", f"Исправление в «{name}»",
                                lambda task: doctor.apply_fix(name, request.action, request.params, task)).to_dict()
+
+
+# --- Отпечаток вылета (только по согласию) ---------------------------------------------
+@router.get("/instances/{name}/doctor/signature")
+def crash_signature_preview(name: str, source: str = "", helped: bool | None = None, fix: str = ""):
+    """Что уйдёт на сервер, если человек согласится. Сам запрос ничего не отправляет."""
+    return crash_signature.preview(name, source, helped, fix)
+
+
+@router.post("/instances/{name}/doctor/signature")
+def crash_signature_send(name: str, request: CrashSignatureRequest):
+    return crash_signature.send(name, request.consent, request.source, request.helped, request.fix)
 
 
 # --- Снимки ----------------------------------------------------------------------------

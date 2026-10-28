@@ -10,6 +10,7 @@ from PySide6.QtQml import QQmlApplicationEngine
 from frontend.quick.bridge import I18nBridge, Shell, load_fonts
 from frontend.quick.build import BuildDetails
 from frontend.quick.catalog import Catalog
+from frontend.quick.doctor import CrashReport
 from frontend.quick.images import NxImageProvider
 from frontend.quick.library import Library
 from frontend.quick.logs import LogView
@@ -43,6 +44,7 @@ class QuickUi:
         self.library = Library(api, self.shell, last_instance)
         self.build = BuildDetails(api, self.shell, self.library)
         self.logs = LogView(api, self.library)
+        self.crash = CrashReport(api, self.shell, self.library)
         self.catalog = Catalog(api, self.shell, self.library)
         self.wizard = Wizard(api, self.shell, self.library)
         self.network = Network(api, self.shell, self.library)
@@ -56,7 +58,7 @@ class QuickUi:
         for name, obj in (("I18n", self.i18n), ("Shell", self.shell), ("Library", self.library),
                           ("Build", self.build), ("Logs", self.logs), ("Catalog", self.catalog),
                           ("Wizard", self.wizard), ("Network", self.network), ("Prefs", self.settings),
-                          ("OptiFine", self.optifine)):
+                          ("OptiFine", self.optifine), ("Crash", self.crash)):
             ctx.setContextProperty(name, obj)
         self._root = None  # корневой объект QML: заполняется в show()
         self._minimized_for: str = ""

@@ -303,8 +303,15 @@ def parse(text: str, mod_ids: set[str] | None = None) -> list[LogEntry]:
             entry.mod = _guess_mod(entry, mod_ids)
             if not entry.noise and entry.level in ("ERROR", "WARN"):
                 blob = "\n".join([entry.message, *entry.extra[:8]])
-                entry.hint = next((t(key) for pattern, key in _HINTS if pattern.search(blob)), "")
+                key = hint_key(blob)
+                entry.hint = t(key) if key else ""
     return entries
+
+
+def hint_key(text: str) -> str:
+    """Ключ пояснения простым языком («loghint.memory») для текста ошибки.
+    Им же помечается отпечаток вылета: по виду правила, а не по тексту на языке интерфейса."""
+    return next((key for pattern, key in _HINTS if pattern.search(text)), "")
 
 
 def _guess_mod(entry: LogEntry, mod_ids: set[str]) -> str:
