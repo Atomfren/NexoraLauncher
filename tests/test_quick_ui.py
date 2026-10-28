@@ -372,7 +372,9 @@ def test_quick_sections_work_end_to_end(qt_app, fake_minecraft, modrinth):
         assert lib.current["name"] == "Create_ Above & Beyond"
         assert ui.wizard.nameError("create: above & beyond") != ""
         lib.rename("Create_ Above & Beyond", "Create: A&B")
-        assert _pump_until(lambda: lib.titleOf("Create_ Above & Beyond") == "Create: A&B")
+        # Переименование с двоеточием — это асинхронная смена заголовка с перезагрузкой списка;
+        # на загруженном шарде CI ждём столько же, сколько соседние операции выше
+        assert _pump_until(lambda: lib.titleOf("Create_ Above & Beyond") == "Create: A&B", 15)
 
         assert not [w for w in warnings if "qml" in w.lower()], warnings
         assert not errors, errors
