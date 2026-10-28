@@ -377,10 +377,12 @@ def test_quick_own_server_settings_and_mods(client, wait_task, fake_server_env, 
 
         network.loadProps()
         assert _pump_until(lambda: len(network.props) > 0)
+        # Каждая правка — свой запрос, и завершаются они в любом порядке:
+        # ждём обе по отдельности, иначе вторая обгоняет первую и ключа ещё нет
         network.setProp("max-players", "4")
+        assert _pump_until(lambda: api.server_properties("Friends").get("max-players") == "4")
         network.setProp("pvp", False)
         assert _pump_until(lambda: api.server_properties("Friends").get("pvp") == "false")
-        assert api.server_properties("Friends")["max-players"] == "4"
 
         network.loadMods()
         assert _pump_until(lambda: not network.modsLoading and len(network.mods) >= 2)
