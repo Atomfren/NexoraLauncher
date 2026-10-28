@@ -1,4 +1,4 @@
-"""Контент: поиск на Modrinth, моды/ресурспаки/шейдеры инстанса, миры."""
+"""Контент: поиск на Modrinth и CurseForge, моды/ресурспаки/шейдеры инстанса, миры."""
 
 from pathlib import Path
 from typing import Any
@@ -10,11 +10,13 @@ from backend.api.v1.tasks import TaskResponse
 from backend.core.content import ContentManager
 from backend.core.instance import InstanceManager
 from backend.core.tasks import task_manager
+from backend.services import curseforge_client as cf
 from backend.services.modrinth_client import PROJECT_TYPES, SORT_INDEXES, get_modrinth
 
 router = APIRouter()
 _TYPE_PATTERN = "^(" + "|".join(PROJECT_TYPES) + ")$"
 _SORT_PATTERN = "^(" + "|".join(SORT_INDEXES) + ")$"
+_PROVIDER_PATTERN = "^(modrinth|curseforge)$"
 
 
 class Project(BaseModel):
@@ -31,6 +33,9 @@ class Project(BaseModel):
     game_versions: list[str] = []
     loaders: list[str] = []
     gallery: list[str] = []
+    provider: str = "modrinth"
+    # Страница проекта на CurseForge: нужна, если файл запрещён к стороннему скачиванию
+    page_url: str = ""
 
 
 class SearchResponse(BaseModel):
@@ -51,6 +56,8 @@ class ProjectVersion(BaseModel):
     date_published: str
     downloads: int
     files: list[dict[str, Any]]
+    # Автор запретил скачивание версии сторонними программами (бывает только у CurseForge)
+    blocked: bool = False
 
 
 class InstalledContent(BaseModel):
@@ -62,6 +69,7 @@ class InstalledContent(BaseModel):
     version_id: str
     version_number: str
     icon_url: str
+    provider: str = ""
 
 
 class InstallRequest(BaseModel):
@@ -97,7 +105,7 @@ def _project_from_hit(h: dict[str, Any]) -> Project:
     )
 
 
-# --- Каталог Modrinth --------------------------------------------------------------
+# --- Каталог Modrinth и CurseForge --------------------------------------------------
 @router.get("/content/search", response_model=SearchResponse)
 def search(
     project_type: str = Query("mod", pattern=_TYPE_PATTERN),
@@ -109,7 +117,13 @@ def search(
     offset: int = Query(0, ge=0),
     side: str = Query("client", pattern="^(client|server)$", description="Моды для клиента или для сервера"),
     category: str | None = Query(None, pattern="^[a-z0-9-]{1,40}$", description="Категория Modrinth"),
+    provider: str = Query("modrinth", pattern=_PROVIDER_PATTERN, description="Каталог: Modrinth или CurseForge"),
 ):
+    if provider == "curseforge":
+        cf.require_key()
+        data = cf.search_mods(query, project_type, game_version, loader, limit, offset, index)
+        return SearchResponse(results=[Project(**row) for row in data["results"]],
+                              total=data["total"], offset=offset, limit=limit)
     data = get_modrinth().search(query, project_type, game_version, loader, limit, offset, index, side, category)
     return SearchResponse(
         results=[_project_from_hit(h) for h in data.get("hits", [])],
@@ -119,6 +133,8 @@ def search(
 
 @router.get("/content/projects/{project_id}", response_model=Project)
 def get_project(project_id: str):
+    if cf.is_curseforge(project_id):
+        return Project(**cf.mod_row(cf.get_mod(project_id)))
     p = get_modrinth().get_project(project_id)
     return Project(
         project_id=p["id"], slug=p.get("slug", ""), title=p.get("title", ""),
@@ -132,6 +148,9 @@ def get_project(project_id: str):
 
 @router.get("/content/projects/{project_id}/versions", response_model=list[ProjectVersion])
 def get_project_versions(project_id: str, game_version: str | None = None, loader: str | None = None):
+    if cf.is_curseforge(project_id):
+        files = cf.mod_files(project_id, game_version, loader)
+        return [ProjectVersion(**cf.file_row(f)) for f in files]
     versions = get_modrinth().get_project_versions(project_id, game_version, [loader] if loader else None)
     return [
         ProjectVersion(

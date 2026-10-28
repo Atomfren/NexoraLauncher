@@ -1,6 +1,8 @@
 """Умные обновления и «Турбо».
 
 - Распознавание модов по SHA-1 через Modrinth, включая добавленные вручную.
+- Моды из CurseForge участвуют в той же проверке: их версия известна из ``content.json``,
+  а свежая берётся из ``latestFilesIndexes`` одним запросом на все проекты.
 - Проверка обновлений под версию игры и загрузчик инстанса, обновление всех модов
   с автоснимком перед изменениями.
 - «Турбо»: набор проверенных модов-оптимизаций под загрузчик, рекомендуемая память
@@ -14,11 +16,12 @@ from typing import Any
 from loguru import logger
 
 from backend.core import snapshots
-from backend.core.content import ContentManager, compatible_loaders
+from backend.core.content import ContentManager, compatible_loaders, provider_of
 from backend.core.errors import BadRequestError, ExternalServiceError, NexoraError
 from backend.core.instance import InstanceManager
 from backend.core.mod_metadata import scan_mods
 from backend.core.tasks import Task
+from backend.services import curseforge_client as cf
 from backend.services.modrinth_client import get_modrinth, pick_primary_file
 from shared.system import recommended_memory_mb
 
@@ -79,11 +82,80 @@ def identify(instance_name: str) -> dict[str, Any]:
     return {"total": len(mods), "identified": identified}
 
 
+def _cf_installed(instance) -> dict[int, tuple[str, dict[str, Any]]]:
+    """Моды инстанса, поставленные из CurseForge: modId → (имя файла, запись content.json)."""
+    result: dict[int, tuple[str, dict[str, Any]]] = {}
+    for key, info in _meta(instance).items():
+        if not key.startswith("mod/") or provider_of(info) != "curseforge":
+            continue
+        filename = key.split("/", 1)[1]
+        try:
+            result[cf.numeric_id(info["project_id"])] = (filename, info)
+        except NexoraError:
+            continue
+    return result
+
+
+def _cf_latest_index(mod: dict[str, Any], game_version: str, loaders: set[str]) -> dict[str, Any] | None:
+    """Свежий файл проекта под версию игры и загрузчик (из latestFilesIndexes)."""
+    suitable = []
+    for index in mod.get("latestFilesIndexes") or []:
+        if index.get("gameVersion") != game_version or not index.get("fileId"):
+            continue
+        loader = cf.LOADER_NAMES.get(index.get("modLoader"))
+        if loader and loaders and loader not in loaders:
+            continue
+        suitable.append(index)
+    releases = [i for i in suitable if i.get("releaseType") == 1]
+    return (releases or suitable or [None])[0]
+
+
+def _curseforge_updates(instance) -> list[dict[str, Any]]:
+    """Обновления для модов из CurseForge."""
+    installed = _cf_installed(instance)
+    if not installed:
+        return []
+    loaders = set(compatible_loaders(instance, "mod") or [])
+    updates = []
+    for mod in cf.get_mods(list(installed)):
+        filename, info = installed.get(int(mod.get("id") or 0), ("", {}))
+        if not filename:
+            continue
+        path = instance.mods_dir / filename
+        disabled = instance.mods_dir / (filename + _DISABLED)
+        if not path.exists() and not disabled.exists():
+            continue  # файл удалили вручную
+        index = _cf_latest_index(mod, instance.version, loaders)
+        if not index:
+            continue
+        version_id = cf.tagged_id(index["fileId"])
+        if version_id == info.get("version_id"):
+            continue
+        updates.append({
+            "filename": disabled.name if not path.exists() else filename,
+            "name": mod.get("name") or info.get("title") or filename,
+            "icon_url": (mod.get("logo") or {}).get("url") or "",
+            "project_id": cf.tagged_id(mod["id"]),
+            "current_version": info.get("version_number", ""),
+            "new_version": index.get("filename") or str(index["fileId"]),
+            "version_id": version_id,
+            "enabled": path.exists(),
+        })
+    return updates
+
+
 def check_updates(instance_name: str) -> list[dict[str, Any]]:
-    """Список доступных обновлений модов инстанса."""
+    """Список доступных обновлений модов инстанса (Modrinth и CurseForge)."""
     instance = InstanceManager.get(instance_name)
     if not instance.is_modded:
         return []
+    curseforge: list[dict[str, Any]] = []
+    try:
+        curseforge = _curseforge_updates(instance)
+    except NexoraError as e:
+        # Нет ключа или CurseForge недоступен — моды Modrinth всё равно проверяем
+        logger.info(f"Обновления CurseForge не проверены: {e}")
+    cf_files = {u["filename"] for u in curseforge}
     mods = scan_mods(instance.mods_dir)
     by_hash = {m.sha1: m for m in mods if m.sha1}
     modrinth = get_modrinth()
@@ -91,12 +163,14 @@ def check_updates(instance_name: str) -> list[dict[str, Any]]:
     latest = modrinth.latest_versions_by_hashes(list(current), compatible_loaders(instance, "mod"),
                                                 [instance.version])
     projects = {p["id"]: p for p in modrinth.get_projects(list({v["project_id"] for v in latest.values()}))}
-    updates = []
+    updates = list(curseforge)
     for sha1, new in latest.items():
         old = current.get(sha1)
         mod = by_hash.get(sha1)
         if not old or not mod or new["id"] == old["id"]:
             continue
+        if mod.filename in cf_files:
+            continue  # этот файл ведёт CurseForge, обновление уже найдено там
         if new.get("date_published", "") < old.get("date_published", ""):
             continue  # не «обновляем» на более старую сборку
         project = projects.get(new["project_id"], {})
@@ -111,6 +185,21 @@ def check_updates(instance_name: str) -> list[dict[str, Any]]:
             "enabled": mod.enabled,
         })
     return sorted(updates, key=lambda u: u["name"].lower())
+
+
+def _apply_curseforge(instance, update: dict[str, Any], task: Task | None) -> tuple[str, dict[str, Any]]:
+    """Скачивает новый файл CurseForge. Возвращает (имя файла, запись content.json)."""
+    file = cf.get_file(update["version_id"])
+    if not file.get("downloadUrl"):
+        raise BadRequestError(cf.blocked_message({}, file))
+    filename = file.get("fileName") or ""
+    target = filename + ("" if update["enabled"] else _DISABLED)
+    cf.download_file(file, instance.mods_dir / target, task)
+    return filename, {
+        "project_id": update["project_id"], "version_id": cf.tagged_id(file["id"]),
+        "version_number": file.get("displayName") or filename, "title": update["name"],
+        "icon_url": update["icon_url"], "provider": "curseforge",
+    }
 
 
 def apply_updates(instance_name: str, version_ids: list[str] | None = None,
@@ -129,19 +218,24 @@ def apply_updates(instance_name: str, version_ids: list[str] | None = None,
         if task:
             task.set_status(f"Обновление {update['name']} ({i}/{len(updates)})…")
         try:
-            version = modrinth.get_version(update["version_id"])
-            file_info = pick_primary_file(version)
-            target_name = file_info["filename"] + ("" if update["enabled"] else _DISABLED)
-            modrinth.download_file(file_info, instance.mods_dir / target_name, task)
-            if target_name != update["filename"]:
+            if cf.is_curseforge(update["version_id"]):
+                entry = _apply_curseforge(instance, update, task)
+            else:
+                version = modrinth.get_version(update["version_id"])
+                file_info = pick_primary_file(version)
+                target_name = file_info["filename"] + ("" if update["enabled"] else _DISABLED)
+                modrinth.download_file(file_info, instance.mods_dir / target_name, task)
+                entry = (file_info["filename"], {
+                    "project_id": update["project_id"], "version_id": version["id"],
+                    "version_number": version.get("version_number", ""), "title": update["name"],
+                    "icon_url": update["icon_url"],
+                })
+            if entry[0] + ("" if update["enabled"] else _DISABLED) != update["filename"]:
                 (instance.mods_dir / update["filename"]).unlink(missing_ok=True)
             meta = _meta(instance)
             meta.pop(f"mod/{update['filename'].removesuffix(_DISABLED)}", None)
-            meta[f"mod/{file_info['filename']}"] = {
-                "project_id": update["project_id"], "version_id": version["id"],
-                "version_number": version.get("version_number", ""), "title": update["name"],
-                "icon_url": update["icon_url"], "installed_at": datetime.now().isoformat(timespec="seconds"),
-            }
+            meta[f"mod/{entry[0]}"] = {**entry[1],
+                                       "installed_at": datetime.now().isoformat(timespec="seconds")}
             ContentManager.save_meta(instance, meta)
             updated.append(update["name"])
         except NexoraError as e:

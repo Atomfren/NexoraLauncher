@@ -180,10 +180,10 @@ class ApiClient:
     # --- Контент ------------------------------------------------------------------------
     def search(self, project_type: str, query: str = "", game_version: str | None = None,
                loader: str | None = None, index: str = "relevance", limit: int = 20,
-               offset: int = 0, category: str | None = None) -> dict:
+               offset: int = 0, category: str | None = None, provider: str = "modrinth") -> dict:
         return self.get("/content/search", project_type=project_type, query=query,
                         game_version=game_version, loader=loader, index=index, limit=limit, offset=offset,
-                        category=category)
+                        category=category, provider=provider)
 
     def project(self, project_id: str) -> dict:
         return self.get(f"/content/projects/{_q(project_id)}")

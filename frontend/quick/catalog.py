@@ -1,4 +1,8 @@
-"""Каталог: Modrinth (моды, ресурсы, шейдеры, плагины, модпаки) и сборки FTB и CurseForge (через API FTB)."""
+"""Каталог: Modrinth и CurseForge (моды, ресурсы, шейдеры, плагины, модпаки), сборки FTB.
+
+Источник переключается для модов, ресурспаков и шейдеров (Modrinth или CurseForge) и отдельно
+для модпаков (Modrinth, FTB или CurseForge — сборки идут через API FTB).
+"""
 
 from typing import Any
 
@@ -16,6 +20,17 @@ from shared.i18n import t
 PAGE = 30
 # Источники модпаков: Modrinth или сборки FTB / CurseForge (All The Mods и др.) через API FTB
 PACK_SOURCES = ("modrinth", "ftb", "curseforge")
+# Источники отдельных модов, ресурспаков и шейдеров: у CurseForge лежит примерно половина модов,
+# которых нет на Modrinth
+MOD_SOURCES = ("modrinth", "curseforge")
+# Типы контента, которые есть в каталоге CurseForge (плагинов Paper там нет)
+CURSEFORGE_TYPES = ("mod", "resourcepack", "shader")
+
+
+def sources_for(content_type: str) -> tuple[str, ...]:
+    if content_type == "modpack":
+        return PACK_SOURCES
+    return MOD_SOURCES if content_type in CURSEFORGE_TYPES else ("modrinth",)
 
 
 def split_pack_id(project_id: str) -> tuple[str, str] | None:
@@ -61,7 +76,7 @@ def project_row(hit: dict, state: str = "none") -> dict[str, Any]:
         "categories": hit.get("categories") or [], "versions": (hit.get("game_versions") or [])[-6:][::-1],
         "loaders": hit.get("loaders") or [],
         "icon": remote_ref(icon) if icon else f"image://nx/mod/{seed}/{(seed * 37) % 360}",
-        "state": state, "progress": 0.0,
+        "state": state, "progress": 0.0, "provider": hit.get("provider") or "modrinth",
     }
 
 
@@ -94,6 +109,7 @@ class Catalog(QObject):
         self._progress: dict[str, float] = {}
         self._project: dict = {}
         self._versions: list[dict] = []
+        self._cf_key: bool | None = None  # None — ещё не спрашивали у бэкенда
         self._search_timer = QTimer(self, singleShot=True, interval=300)
         self._search_timer.timeout.connect(self.search)
         shell.tracker.tasks_changed.connect(self._on_tasks)
@@ -107,17 +123,43 @@ class Catalog(QObject):
 
     @Property(str, notify=changed)
     def source(self) -> str:
-        """Источник модпаков: modrinth, ftb или curseforge."""
+        """Источник: modrinth или curseforge (для модпаков ещё ftb)."""
         return self._source
+
+    @Property("QVariantList", notify=changed)
+    def sources(self) -> list[dict]:
+        """Какие источники доступны для текущего типа контента."""
+        labels = {"modrinth": "Modrinth", "ftb": "FTB", "curseforge": "CurseForge"}
+        return [{"value": s, "label": labels[s]} for s in sources_for(self._type)]
+
+    @Property(bool, notify=changed)
+    def needsCurseforgeKey(self) -> bool:
+        """CurseForge выбран, но ключ API не сохранён — вместо пустого списка показываем объяснение."""
+        return self._source == "curseforge" and self._type != "modpack" and self._cf_key is False
 
     @Slot(str)
     def setSource(self, value: str) -> None:
-        if value not in PACK_SOURCES or value == self._source:
+        if value not in sources_for(self._type) or value == self._source:
             return
         self._source = value
         self._category = ""
+        if value == "curseforge":
+            self._check_cf_key()
         self.changed.emit()
         self.search()
+
+    def _check_cf_key(self) -> None:
+        """Ключ CurseForge спрашиваем у бэкенда один раз на открытие каталога."""
+        if self._cf_key is not None:
+            return
+
+        def done(data: dict) -> None:
+            self._cf_key = bool(data.get("curseforge_key_set"))
+            self.changed.emit()
+            self.resultsChanged.emit()
+
+        run_async(self.api.settings, done, lambda msg: logger.warning(f"Настройки не загружены: {msg}"),
+                  owner=self)
 
     @property
     def _external(self) -> bool:
@@ -158,6 +200,8 @@ class Catalog(QObject):
 
     @Property("QVariantList", notify=changed)
     def categories(self) -> list[dict]:
+        if self._source == "curseforge":
+            return []  # у CurseForge свои категории, числовыми ID — фильтр не показываем
         return [{"value": c, "label": t(f"q.cat_{c.replace('-', '_')}")} for c in CATEGORIES[self._type]]
 
     @Property("QVariantList", notify=resultsChanged)
@@ -223,6 +267,8 @@ class Catalog(QObject):
             return
         self._type = value
         self._category = ""
+        if self._source not in sources_for(value):
+            self._source = "modrinth"  # у плагинов и модпаков свои наборы источников
         if value == "plugin":
             self._target = self._servers[0]["name"] if self._servers else ""
             self._loader = ""
@@ -288,7 +334,7 @@ class Catalog(QObject):
             loader = server.get("core") if server else "paper"
         params = dict(project_type=self._type, query=self._query, game_version=self._version or None, loader=loader,
                       index=self._sort if not (self._sort == "relevance" and not self._query) else "downloads",
-                      limit=PAGE, offset=offset, category=self._category or None)
+                      limit=PAGE, offset=offset, category=self._category or None, provider=self._source)
 
         def done(data: dict) -> None:
             if gen != self._gen:
@@ -385,7 +431,8 @@ class Catalog(QObject):
         if kind != "modpack" and not target:
             self.shell.toast(t("q.pick_target"), "err")
             return
-        external = split_pack_id(project_id)
+        # «curseforge:123» — это сборка только в разделе модпаков; у мода тот же вид ID
+        external = split_pack_id(project_id) if kind == "modpack" else None
         if external:
             call = lambda: self.api.install_pack(*external)  # noqa: E731
         elif kind == "modpack":
@@ -434,7 +481,7 @@ class Catalog(QObject):
         self._versions = []
         self.projectChanged.emit()
         kind, version, loader = self._type, self._version or None, self._loader or None
-        external = split_pack_id(project_id)
+        external = split_pack_id(project_id) if kind == "modpack" else None
         if external:
             self._open_pack(project_id, *external)
             return
@@ -452,9 +499,13 @@ class Catalog(QObject):
                                  loadingDetails=False,
                                  followers=compact(int(project.get("follows") or 0)),
                                  allVersions=(project.get("game_versions") or [])[-8:][::-1],
-                                 allLoaders=project.get("loaders") or [])
+                                 allLoaders=project.get("loaders") or [],
+                                 provider=project.get("provider") or "modrinth",
+                                 pageUrl=project.get("page_url") or "")
             self._versions = [{"id": v["id"], "number": v.get("version_number", ""), "type": v.get("version_type", ""),
                                "mc": ", ".join(v.get("game_versions", [])[-2:]),
+                               # blocked — автор CurseForge запретил скачивание сторонними программами
+                               "blocked": bool(v.get("blocked")),
                                "date": fmt.when(v.get("date_published", "")[:19])} for v in versions[:8]]
             self.projectChanged.emit()
 

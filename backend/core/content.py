@@ -1,4 +1,8 @@
-"""Контент инстанса: моды, ресурспаки, шейдеры (Modrinth) и миры."""
+"""Контент инстанса: моды, ресурспаки, шейдеры (Modrinth и CurseForge) и миры.
+
+Источник проекта виден по его идентификатору: у CurseForge он с приставкой ``curseforge:``
+(см. :mod:`backend.services.curseforge_client`), у Modrinth — обычный slug-подобный ID.
+"""
 
 import shutil
 import threading
@@ -12,6 +16,7 @@ from loguru import logger
 from backend.core.errors import BadRequestError, ConflictError, NotFoundError
 from backend.core.instance import Instance, InstanceManager
 from backend.core.tasks import Task
+from backend.services import curseforge_client as cf
 from backend.services.modrinth_client import LOADER_FAMILIES, get_modrinth, pick_primary_file
 from shared.fsutil import (
     UnsafePathError,
@@ -46,6 +51,15 @@ def _content_file(instance: Instance, content_type: str, filename: str) -> Path:
         return safe_join(folder, filename)
     except UnsafePathError as e:
         raise BadRequestError(str(e)) from e
+
+
+def provider_of(info: dict[str, Any]) -> str:
+    """Источник установленного файла: curseforge, modrinth или пусто (добавлен вручную)."""
+    if info.get("provider"):
+        return str(info["provider"])
+    if cf.is_curseforge(info.get("project_id")):
+        return "curseforge"
+    return "modrinth" if info.get("project_id") else ""
 
 
 def compatible_loaders(instance: Instance, content_type: str) -> list[str] | None:
@@ -106,6 +120,7 @@ class ContentManager:
                 "version_id": info.get("version_id", ""),
                 "version_number": info.get("version_number", ""),
                 "icon_url": info.get("icon_url", ""),
+                "provider": provider_of(info),
             })
         return items
 
@@ -187,9 +202,121 @@ class ContentManager:
         _check_type(content_type)
         installed: list[dict[str, Any]] = []
         visited: set[str] = set()
-        ContentManager._install_one(target, content_type, project_id, version_id, task,
-                                    with_dependencies and content_type in ("mod", "plugin"), visited, installed)
+        with_deps = with_dependencies and content_type in ("mod", "plugin")
+        if cf.is_curseforge(project_id):
+            ContentManager._install_curseforge(target, content_type, project_id, version_id, task,
+                                               with_deps, visited, installed)
+        else:
+            ContentManager._install_one(target, content_type, project_id, version_id, task,
+                                        with_deps, visited, installed)
         return installed
+
+    # --- Установка из CurseForge ---------------------------------------------------
+    @staticmethod
+    def _cf_select_file(instance: Instance, content_type: str, project_id: str,
+                        version_id: str | None) -> dict[str, Any]:
+        """Файл CurseForge: указанный пользователем или свежий совместимый."""
+        if version_id:
+            return cf.get_file(version_id)
+        loader = instance.mod_loader if content_type == "mod" else None
+        loaders = compatible_loaders(instance, content_type) if content_type == "mod" else None
+        files = cf.mod_files(project_id, instance.version, loader)
+        if not files and content_type != "mod":
+            # Ресурспаки и шейдеры часто не указывают все версии игры
+            files = cf.mod_files(project_id)
+        if not files:
+            raise NotFoundError(f"На CurseForge нет версии под {instance.mod_loader} {instance.version}")
+        return cf.pick_file(files, instance.version if content_type == "mod" else None, loaders)
+
+    @staticmethod
+    def _cf_check_incompatible(instance: Instance, content_type: str, file: dict[str, Any],
+                              title: str) -> None:
+        """Не даёт поставить мод, который автор пометил несовместимым с уже установленным."""
+        forbidden = set(cf.incompatible_dependencies(file))
+        if not forbidden:
+            return
+        for key, info in ContentManager.load_meta(instance).items():
+            if not key.startswith(f"{content_type}/") or not cf.is_curseforge(info.get("project_id")):
+                continue
+            if cf.numeric_id(info["project_id"]) in forbidden:
+                other = info.get("title") or info["project_id"]
+                raise ConflictError(f"«{title}» несовместим с установленным «{other}». "
+                                    f"Удалите «{other}» или выберите другой мод.")
+
+    @staticmethod
+    def _install_curseforge(instance: Instance, content_type: str, project_id: str, version_id: str | None,
+                            task: Task | None, with_deps: bool, visited: set[str],
+                            installed: list[dict[str, Any]]) -> None:
+        if content_type not in cf.CLASS_IDS:
+            raise BadRequestError(f"CurseForge не отдаёт контент типа «{content_type}»")
+        project_id = cf.tagged_id(cf.numeric_id(project_id))
+        if project_id in visited:
+            return
+        visited.add(project_id)
+        mod = cf.get_mod(project_id)
+        title = mod.get("name") or project_id
+        file = ContentManager._cf_select_file(instance, content_type, project_id, version_id)
+        if not file.get("downloadUrl"):
+            # Автор запретил раздачу сторонними программами — честно отправляем на сайт
+            raise BadRequestError(cf.blocked_message(mod, file))
+        ContentManager._cf_check_incompatible(instance, content_type, file, title)
+        if task:
+            task.set_status(f"Загрузка {title}…")
+
+        filename = file.get("fileName") or ""
+        try:
+            validate_name(filename, max_length=255)
+        except UnsafePathError as e:
+            raise BadRequestError(f"Недопустимое имя файла от CurseForge: {e}") from e
+        folder = instance.game_dir / CONTENT_DIRS[content_type]
+        ContentManager._drop_old_version(instance, content_type, project_id, folder, filename)
+        cf.download_file(file, folder / filename, task)
+        with _meta_lock:
+            meta = ContentManager.load_meta(instance)
+            meta[f"{content_type}/{filename}"] = {
+                "project_id": project_id,
+                "version_id": cf.tagged_id(file["id"]),
+                "version_number": file.get("displayName") or filename,
+                "title": title,
+                "icon_url": (mod.get("logo") or {}).get("url") or "",
+                "provider": "curseforge",
+                "installed_at": datetime.now().isoformat(timespec="seconds"),
+            }
+            ContentManager.save_meta(instance, meta)
+        installed.append({"project_id": project_id, "title": title, "filename": filename})
+        logger.info(f"Установлен {content_type} '{title}' из CurseForge в '{instance.name}'")
+
+        if not with_deps:
+            return
+        present = {i.get("project_id") for i in ContentManager.load_meta(instance).values()}
+        for dep in cf.required_dependencies(file):
+            dep_id = cf.tagged_id(dep)
+            if dep_id in present:
+                continue
+            try:
+                ContentManager._install_curseforge(instance, content_type, dep_id, None, task,
+                                                   True, visited, installed)
+            except (NotFoundError, BadRequestError) as e:
+                # Зависимость может быть под другую версию или запрещена к скачиванию
+                logger.warning(f"Зависимость CurseForge {dep_id} не установлена: {e}")
+
+    @staticmethod
+    def _drop_old_version(instance: Instance, content_type: str, project_id: str, folder: Path,
+                          filename: str) -> None:
+        """Убирает прежний файл того же проекта (и его запись), если имя изменилось."""
+        with _meta_lock:
+            meta = ContentManager.load_meta(instance)
+            changed = False
+            for key, info in list(meta.items()):
+                if info.get("project_id") == project_id and key.startswith(f"{content_type}/"):
+                    old_name = key.split("/", 1)[1]
+                    if old_name != filename:
+                        for candidate in (folder / old_name, folder / (old_name + _DISABLED)):
+                            candidate.unlink(missing_ok=True)
+                    meta.pop(key)
+                    changed = True
+            if changed:
+                ContentManager.save_meta(instance, meta)
 
     @staticmethod
     def _check_incompatible(instance: Instance, content_type: str, version: dict[str, Any], title: str) -> None:

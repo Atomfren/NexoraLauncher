@@ -50,6 +50,10 @@ def world_row(world: dict) -> dict[str, Any]:
             else f"image://nx/scene/{art.palette_for(world['name'])}/{seed}/9/6"}
 
 
+# Источник установленного файла → как он подписан в списке модов
+_SOURCE_NAMES = {"modrinth": "Modrinth", "curseforge": "CurseForge"}
+
+
 def content_row(item: dict, update: dict | None = None) -> dict[str, Any]:
     seed = art.seed_of(item.get("project_id") or item["filename"])
     icon = item.get("icon_url", "")
@@ -59,7 +63,8 @@ def content_row(item: dict, update: dict | None = None) -> dict[str, Any]:
         version = stem.rsplit("-", 1)[-1] if "-" in stem else ""
     return {
         "filename": item["filename"], "name": item.get("name", item["filename"]), "enabled": item["enabled"],
-        "version": version, "source": "Modrinth" if item.get("project_id") else t("q.source_local"),
+        "version": version, "source": _SOURCE_NAMES.get(item.get("provider") or "")
+        or ("Modrinth" if item.get("project_id") else t("q.source_local")),
         "size": fmt.size(item.get("size", 0)),
         "icon": remote_ref(icon) if icon
         else f"image://nx/mod/{seed}/{(seed * 37) % 360}",

@@ -39,14 +39,13 @@ Item {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             spacing: 12
-            // Источник модпаков: Modrinth или сборки FTB / CurseForge (All The Mods)
+            // Источник: Modrinth или CurseForge для модов, плюс FTB для сборок
             NxSegmentedControl {
                 objectName: "packSource"
-                visible: Catalog.type === "modpack"
+                visible: Catalog.sources.length > 1
                 anchors.verticalCenter: parent.verticalCenter
                 value: Catalog.source
-                model: [{ value: "modrinth", label: "Modrinth" }, { value: "ftb", label: "FTB" },
-                        { value: "curseforge", label: "CurseForge" }]
+                model: Catalog.sources
                 onActivated: v => Catalog.setSource(v)
             }
             NxTextField {
@@ -115,9 +114,10 @@ Item {
                 }
             }
             NxText {
-                visible: Catalog.type === "modpack" && Catalog.source !== "modrinth"
+                visible: Catalog.source !== "modrinth"
                 width: parent.width
-                text: Catalog.source === "ftb" ? I18n.t("q.ftb_hint") : I18n.t("q.cf_hint")
+                text: Catalog.source === "ftb" ? I18n.t("q.ftb_hint")
+                                               : Catalog.type === "modpack" ? I18n.t("q.cf_hint") : I18n.t("q.cf_mods_hint")
                 muted: true
                 font.pixelSize: 12
                 lineHeight: 16
@@ -125,7 +125,7 @@ Item {
                 elide: Text.ElideNone
             }
             Column {
-                visible: !(Catalog.type === "modpack" && Catalog.source !== "modrinth")
+                visible: Catalog.categories.length > 0
                 width: parent.width
                 spacing: 2
                 NxText { text: I18n.t("q.categories"); variant: "caption"; bottomPadding: 6 }
@@ -238,9 +238,17 @@ Item {
             leftPadding: 0
             compact: true
             illustration: "search"
-            text: Catalog.error !== "" ? I18n.t("q.catalog_offline") : I18n.tf("q.nothing_for", { q: Catalog.query })
-            NxButton { visible: Catalog.error !== ""; iconName: "refresh"; text: I18n.t("q.retry"); onClicked: Catalog.search() }
-            NxButton { visible: Catalog.error === "" && Catalog.query !== ""; text: I18n.t("q.reset_search"); onClicked: { search.text = ""; Catalog.setQuery("") } }
+            // Без ключа CurseForge объясняем, где его взять, а не показываем пустой список
+            text: Catalog.needsCurseforgeKey ? I18n.t("q.cf_no_key")
+                  : Catalog.error !== "" ? I18n.t("q.catalog_offline") : I18n.tf("q.nothing_for", { q: Catalog.query })
+            NxButton {
+                visible: Catalog.needsCurseforgeKey
+                iconName: "sliders"
+                text: I18n.t("q.cf_open_settings")
+                onClicked: Shell.navigate("settings", "general")
+            }
+            NxButton { visible: !Catalog.needsCurseforgeKey && Catalog.error !== ""; iconName: "refresh"; text: I18n.t("q.retry"); onClicked: Catalog.search() }
+            NxButton { visible: !Catalog.needsCurseforgeKey && Catalog.error === "" && Catalog.query !== ""; text: I18n.t("q.reset_search"); onClicked: { search.text = ""; Catalog.setQuery("") } }
         }
     }
 
@@ -292,6 +300,14 @@ Item {
                 }
             }
         }
+        // Страница на CurseForge: нужна, если автор запретил скачивание сторонними программами
+        NxButton {
+            visible: drawer.p.provider === "curseforge" && !!drawer.p.pageUrl
+            variant: "ghost"
+            iconName: "external"
+            text: I18n.t("q.cf_open_page")
+            onClicked: Shell.openUrl(drawer.p.pageUrl)
+        }
         NxSectionHeader { width: drawer.bodyWidth; text: I18n.t("q.versions") }
         NxSpinner { visible: !!drawer.p.loadingDetails; color: NxTheme.muted }
         Repeater {
@@ -305,8 +321,9 @@ Item {
                 NxChip {
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    text: parent.modelData.type
-                    kind: parent.modelData.type === "release" ? "" : "warn"
+                    // Файл, запрещённый автором к стороннему скачиванию, качается только с сайта
+                    text: parent.modelData.blocked ? I18n.t("q.cf_blocked_version") : parent.modelData.type
+                    kind: parent.modelData.blocked || parent.modelData.type !== "release" ? "warn" : ""
                 }
             }
         }
