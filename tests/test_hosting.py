@@ -260,6 +260,183 @@ def test_backup_of_running_server_and_auto_backup_on_stop(client, wait_task, fak
     assert reasons.count("auto") == 1 and reasons.count("manual") == 1
 
 
+def test_scheduled_backup_while_running(client, wait_task, fake_server_env, monkeypatch):
+    """Бэкап по расписанию: раз в N «часов», пока сервер работает, с лимитом хранения."""
+    # «Час» расписания — доли секунды, иначе тест ждал бы настоящий час
+    monkeypatch.setattr(hosting, "BACKUP_INTERVAL_SECONDS", 0.25)
+    monkeypatch.setattr(hosting, "BACKUP_TICK_SECONDS", 0.05)
+    _create(client, wait_task)
+    _make_world()
+    assert client.patch("/api/v1/hosting/servers/Friends",
+                        json={"backup_interval_hours": 1, "backups_keep": 2}).status_code == 200
+    assert client.get("/api/v1/hosting/servers/Friends").json()["backup_interval_hours"] == 1
+
+    client.post("/api/v1/hosting/servers/Friends/start")
+    _wait_state(client, "Friends", lambda s: s["state"] == "running")
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        autos = [b for b in client.get("/api/v1/hosting/servers/Friends/backups").json() if b["reason"] == "auto"]
+        if len(autos) >= 2:
+            break
+        time.sleep(0.1)
+    assert len(autos) >= 2, "расписание не сделало ни одной копии"
+    # Перед копированием мир просили сохраниться и запись ставили на паузу
+    console = client.get("/api/v1/hosting/servers/Friends/console").json()
+    assert "> save-off" in console and "> save-all flush" in console and "> save-on" in console
+
+    client.post("/api/v1/hosting/servers/Friends/stop")
+    _wait_state(client, "Friends", lambda s: s["state"] in ("stopped", "crashed"))
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        autos = [b for b in client.get("/api/v1/hosting/servers/Friends/backups").json() if b["reason"] == "auto"]
+        if autos:
+            break
+        time.sleep(0.1)
+    assert len(autos) <= 2, f"лимит backups_keep не соблюдён: {len(autos)}"
+    assert client.patch("/api/v1/hosting/servers/Friends", json={"backup_interval_hours": 500}).status_code == 422
+
+
+def test_scheduled_backup_off_by_default(client, wait_task, fake_server_env, monkeypatch):
+    monkeypatch.setattr(hosting, "BACKUP_INTERVAL_SECONDS", 0.1)
+    monkeypatch.setattr(hosting, "BACKUP_TICK_SECONDS", 0.05)
+    server = _create(client, wait_task)
+    assert server["backup_interval_hours"] == 0
+    _make_world()
+    client.post("/api/v1/hosting/servers/Friends/start")
+    _wait_state(client, "Friends", lambda s: s["state"] == "running")
+    time.sleep(0.5)
+    assert client.get("/api/v1/hosting/servers/Friends/backups").json() == []
+    client.post("/api/v1/hosting/servers/Friends/stop")
+    _wait_state(client, "Friends", lambda s: s["state"] in ("stopped", "crashed"))
+
+
+def test_offline_uuid_matches_minecraft():
+    """Офлайн-UUID считается так же, как его считает сам сервер."""
+    assert hosting.offline_uuid("Steve") == "5627dd98-e6be-3c21-b8a8-e92344183641"
+    assert hosting.offline_uuid("Alex") == "36532b5e-c442-3dbb-a24c-c7e55d0f979a"
+    assert hosting.offline_uuid("Steve") != hosting.offline_uuid("steve")  # регистр ника важен
+
+
+def test_whitelist_and_ops_on_stopped_server(client, wait_task, fake_server_env):
+    """Остановленный сервер: whitelist.json и ops.json правятся напрямую."""
+    _create(client, wait_task)
+    folder = hosting.servers_dir() / "Friends"
+    state = client.get("/api/v1/hosting/servers/Friends/players").json()
+    assert state == {"online_mode": False, "white_list": False, "running": False, "whitelist": [], "ops": []}
+
+    r = client.post("/api/v1/hosting/servers/Friends/whitelist", json={"name": "Steve"})
+    assert r.status_code == 200, r.text
+    assert r.json()["whitelist"] == ["Steve"] and r.json()["ops"] == []
+    entries = json.loads((folder / "whitelist.json").read_text(encoding="utf-8"))
+    assert entries == [{"uuid": hosting.offline_uuid("Steve"), "name": "Steve"}]
+
+    # Повторное добавление ничего не дублирует
+    assert client.post("/api/v1/hosting/servers/Friends/whitelist", json={"name": "steve"}).json()["whitelist"] \
+        == ["Steve"]
+
+    r = client.post("/api/v1/hosting/servers/Friends/ops", json={"name": "Steve"})
+    assert r.json()["ops"] == ["Steve"]
+    ops = json.loads((folder / "ops.json").read_text(encoding="utf-8"))
+    assert ops == [{"uuid": hosting.offline_uuid("Steve"), "name": "Steve", "level": 4, "bypassesPlayerLimit": False}]
+
+    client.post("/api/v1/hosting/servers/Friends/whitelist", json={"name": "Alex"})
+    assert client.get("/api/v1/hosting/servers/Friends/players").json()["whitelist"] == ["Alex", "Steve"]
+
+    assert client.delete("/api/v1/hosting/servers/Friends/ops/Steve").json()["ops"] == []
+    assert client.delete("/api/v1/hosting/servers/Friends/whitelist/Steve").json()["whitelist"] == ["Alex"]
+    assert json.loads((folder / "ops.json").read_text(encoding="utf-8")) == []
+
+    # Плохие ники и несуществующий сервер
+    assert client.post("/api/v1/hosting/servers/Friends/whitelist", json={"name": "ab"}).status_code == 422
+    assert client.post("/api/v1/hosting/servers/Friends/whitelist", json={"name": "a b c"}).status_code == 400
+    assert client.get("/api/v1/hosting/servers/Nope/players").status_code == 404
+
+
+def test_whitelist_on_running_server_sends_command(client, wait_task, fake_server_env):
+    """Запущенный сервер: изменение уходит командой в консоль и попадает в файл."""
+    _create(client, wait_task)
+    client.post("/api/v1/hosting/servers/Friends/start")
+    _wait_state(client, "Friends", lambda s: s["state"] == "running")
+    assert client.get("/api/v1/hosting/servers/Friends/players").json()["running"] is True
+
+    assert client.post("/api/v1/hosting/servers/Friends/whitelist", json={"name": "Notch"}).json()["whitelist"] \
+        == ["Notch"]
+    client.post("/api/v1/hosting/servers/Friends/ops", json={"name": "Notch"})
+    client.delete("/api/v1/hosting/servers/Friends/ops/Notch")
+    client.delete("/api/v1/hosting/servers/Friends/whitelist/Notch")
+    console = client.get("/api/v1/hosting/servers/Friends/console").json()
+    for command in ("> whitelist add Notch", "> op Notch", "> deop Notch", "> whitelist remove Notch"):
+        assert command in console, console
+    client.post("/api/v1/hosting/servers/Friends/stop")
+    _wait_state(client, "Friends", lambda s: s["state"] in ("stopped", "crashed"))
+
+
+def test_online_mode_uuid_from_mojang(client, wait_task, fake_server_env, monkeypatch):
+    """При online-mode=true UUID берётся из профиля Mojang; без профиля — понятная ошибка."""
+    _create(client, wait_task)
+    client.patch("/api/v1/hosting/servers/Friends/properties", json={"online-mode": True})
+    assert client.get("/api/v1/hosting/servers/Friends/players").json()["online_mode"] is True
+
+    def fake_mojang(nick: str) -> str:
+        if nick != "Notch":
+            raise hosting.NotFoundError(f"Лицензионного игрока «{nick}» у Mojang нет")
+        return "069a79f4-44e9-4726-a5be-fca90e38aaf5"
+
+    monkeypatch.setattr(hosting, "mojang_uuid", fake_mojang)
+    r = client.post("/api/v1/hosting/servers/Friends/whitelist", json={"name": "Notch"})
+    assert r.status_code == 200 and r.json()["whitelist"] == ["Notch"]
+    entries = json.loads((hosting.servers_dir() / "Friends" / "whitelist.json").read_text(encoding="utf-8"))
+    assert entries[0]["uuid"] == "069a79f4-44e9-4726-a5be-fca90e38aaf5"
+    assert client.post("/api/v1/hosting/servers/Friends/whitelist", json={"name": "NoSuchGuy"}).status_code == 404
+
+
+def test_mojang_uuid_lookup(monkeypatch):
+    """Разбор ответа api.mojang.com (сеть подменена)."""
+    real_client = httpx.Client
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/Notch"):
+            return httpx.Response(200, json={"id": "069a79f444e94726a5befca90e38aaf5", "name": "Notch"})
+        return httpx.Response(404, json={"errorMessage": "Not found"})
+
+    monkeypatch.setattr(hosting.httpx, "Client",
+                        lambda *a, **kw: real_client(*a, **{**kw, "transport": httpx.MockTransport(handler)}))
+    assert hosting.mojang_uuid("Notch") == "069a79f4-44e9-4726-a5be-fca90e38aaf5"
+    with pytest.raises(hosting.NotFoundError):
+        hosting.mojang_uuid("NoSuchGuy")
+
+
+def test_console_lines_highlighting(client, wait_task, fake_server_env):
+    """Разбор консоли: уровень, вид строки, вход и выход игроков."""
+    assert hosting.classify_console_line("> stop") == {
+        "text": "> stop", "time": "", "level": "", "kind": "command", "message": "stop", "player": ""}
+    warn = hosting.classify_console_line("[12:00:00] [Server thread/WARN]: Can't keep up!")
+    assert warn["kind"] == "warn" and warn["level"] == "WARN" and warn["message"] == "Can't keep up!"
+    err = hosting.classify_console_line("[12:00:00] [Server thread/ERROR]: Exception ticking world")
+    assert err["kind"] == "error" and err["time"] == "12:00:00"
+    assert hosting.classify_console_line("[12:00:00] [main/FATAL]: boom")["level"] == "ERROR"
+    assert hosting.classify_console_line("\tat net.minecraft.Foo.bar(Foo.java:1)")["kind"] == "error"
+    assert hosting.classify_console_line("java.lang.OutOfMemoryError: heap")["kind"] == "error"
+    join = hosting.classify_console_line("[12:00:03] [Server thread/INFO]: Steve joined the game")
+    assert join["kind"] == "join" and join["player"] == "Steve"
+    leave = hosting.classify_console_line("[12:00:05] [Server thread/INFO]: Steve left the game")
+    assert leave["kind"] == "leave" and leave["player"] == "Steve"
+    assert hosting.classify_console_line("[12:00:01] [e4mc/INFO]: Domain assigned: a.e4mc.link")["kind"] == "address"
+    assert hosting.classify_console_line('[12:00:02] [Server thread/INFO]: Done (1.2s)! For help')["kind"] == "ready"
+    assert hosting.classify_console_line("сырая строка") == {
+        "text": "сырая строка", "time": "", "level": "", "kind": "plain", "message": "сырая строка", "player": ""}
+
+    _create(client, wait_task)
+    client.post("/api/v1/hosting/servers/Friends/start")
+    _wait_state(client, "Friends", lambda s: s["state"] == "running" and s["players"])
+    rows = client.get("/api/v1/hosting/servers/Friends/console_lines").json()
+    kinds = {r["kind"] for r in rows}
+    assert {"join", "address", "ready"} <= kinds
+    assert [r["text"] for r in rows] == client.get("/api/v1/hosting/servers/Friends/console").json()
+    client.post("/api/v1/hosting/servers/Friends/stop")
+    _wait_state(client, "Friends", lambda s: s["state"] in ("stopped", "crashed"))
+
+
 @pytest.fixture
 def paper_env(monkeypatch, modrinth, fake_minecraft):
     """Ядро Paper: API PaperMC подменён, Java — текущий Python."""
@@ -334,6 +511,86 @@ def test_unsupported_core_version_and_vanilla(client, wait_task, paper_env, monk
     server = client.get("/api/v1/hosting/servers/Vanilla").json()
     assert server["content_type"] is None and (hosting.servers_dir() / "Vanilla" / "server.jar").exists()
     assert client.post("/api/v1/hosting/servers/Vanilla/mods", json={"project_id": "luckperms"}).status_code == 400
+
+
+def test_quick_own_server_players_console_and_schedule(client, wait_task, fake_server_env, monkeypatch):
+    """QML «Сеть → свой сервер»: белый список и операторы, расписание бэкапов, консоль с подсветкой."""
+    pytest.importorskip("PySide6.QtQuick")
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from test_quick_ui import _pump_until
+
+    from frontend.backend_runner import EmbeddedBackend
+    from frontend.quick.bridge import Shell
+    from frontend.quick.library import Library
+    from frontend.quick.network import Network, console_rows, player_rows
+    from frontend.services.api_client import ApiClient
+
+    # Разбор без интерфейса: белый список и операторы сводятся в одну таблицу
+    assert player_rows({"whitelist": ["Steve"], "ops": ["steve", "Alex"]}) == [
+        {"name": "Alex", "whitelisted": False, "op": True},
+        {"name": "Steve", "whitelisted": True, "op": True}]
+    assert player_rows({}) == []
+    lines = [{"text": "a", "kind": "plain"}, {"text": "b", "kind": "warn"}, {"text": "c", "kind": "error"}]
+    assert [r["text"] for r in console_rows(lines)] == ["a", "b", "c"]
+    assert [r["text"] for r in console_rows(lines, True)] == ["b", "c"]  # фильтр «только проблемы»
+
+    _create(client, wait_task)
+    monkeypatch.setattr(httpx, "Client", httpx._client.Client)
+    app = QApplication.instance() or QApplication(sys.argv)  # noqa: F841 — держим ссылку
+    backend = EmbeddedBackend()
+    backend.start()
+    api = ApiClient(backend.base_url, backend.token)
+    try:
+        shell = Shell(api, False, ("Segoe UI", "Consolas"))
+        network = Network(api, shell, Library(api, shell, ""))
+        errors: list[str] = []
+        shell.toastRequested.connect(lambda text, kind: errors.append(text) if kind == "err" else None)
+        network.activate()
+        assert _pump_until(lambda: network.own.get("name") == "Friends")
+
+        loads: list[int] = []
+        network.playersChanged.connect(lambda: loads.append(1))
+        network.loadPlayers()
+        assert _pump_until(lambda: bool(loads))
+        assert network.playerRows == [] and network.serverPlayers["onlineMode"] is False
+
+        # Каждая правка — свой запрос, завершаются они в любом порядке: ждём каждую отдельно
+        network.setWhitelisted("Steve", True)
+        assert _pump_until(lambda: [r["name"] for r in network.playerRows] == ["Steve"])
+        assert network.playerRows[0] == {"name": "Steve", "whitelisted": True, "op": False}
+        network.setOperator("Steve", True)
+        assert _pump_until(lambda: bool(network.playerRows) and network.playerRows[0]["op"])
+        network.removePlayer("Steve")  # убирает и из операторов, и из белого списка
+        assert _pump_until(lambda: network.playerRows == [])
+        assert api.server_players("Friends") == {"online_mode": False, "white_list": False, "running": False,
+                                                 "whitelist": [], "ops": []}
+
+        network.setBackupInterval(6)
+        assert _pump_until(lambda: api.hosted_server("Friends")["backup_interval_hours"] == 6)
+        network.setBackupsKeep(3)
+        assert _pump_until(lambda: api.hosted_server("Friends")["backups_keep"] == 3)
+        assert _pump_until(lambda: network.own.get("backupInterval") == 6 and network.own.get("backupsKeep") == 3)
+
+        api.start_hosted_server("Friends")
+        network.setConsoleOpen(True)
+        assert _pump_until(lambda: any(r["kind"] == "join" for r in network.consoleLines))
+        assert any(r["kind"] == "ready" for r in network.consoleLines)
+        assert network.console and network.console[0] == network.consoleLines[0]["text"]
+        network.setConsoleProblemsOnly(True)
+        assert all(r["kind"] in ("error", "warn") for r in network.consoleLines)
+        network.setConsoleProblemsOnly(False)
+        assert any(r["kind"] == "join" for r in network.consoleLines)
+        network.setConsoleOpen(False)
+        network.deactivate()
+        # Дальше только через api: встроенный backend сменил токен доступа, и фикстура client уже не подходит
+        api.stop_hosted_server("Friends")
+        assert _pump_until(lambda: api.hosted_server("Friends")["state"] in ("stopped", "crashed"))
+        assert not errors, errors
+    finally:
+        api.close()
+        backend.stop()
 
 
 def test_quick_own_server_settings_and_mods(client, wait_task, fake_server_env, monkeypatch):

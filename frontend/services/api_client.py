@@ -308,6 +308,24 @@ class ApiClient:
     def server_console(self, name: str, lines: int = 500) -> list[str]:
         return self.get(f"/hosting/servers/{_q(name)}/console", lines=lines)
 
+    def server_console_lines(self, name: str, lines: int = 500) -> list[dict]:
+        return self.get(f"/hosting/servers/{_q(name)}/console_lines", lines=lines)
+
+    def server_players(self, name: str) -> dict:
+        return self.get(f"/hosting/servers/{_q(name)}/players")
+
+    def add_to_whitelist(self, name: str, player: str) -> dict:
+        return self.post(f"/hosting/servers/{_q(name)}/whitelist", {"name": player})
+
+    def remove_from_whitelist(self, name: str, player: str) -> dict:
+        return self.delete(f"/hosting/servers/{_q(name)}/whitelist/{_q(player)}")
+
+    def add_server_operator(self, name: str, player: str) -> dict:
+        return self.post(f"/hosting/servers/{_q(name)}/ops", {"name": player})
+
+    def remove_server_operator(self, name: str, player: str) -> dict:
+        return self.delete(f"/hosting/servers/{_q(name)}/ops/{_q(player)}")
+
     def server_properties(self, name: str) -> dict:
         return self.get(f"/hosting/servers/{_q(name)}/properties")
 

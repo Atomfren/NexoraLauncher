@@ -32,10 +32,15 @@ class ServerUpdate(BaseModel):
     jvm_args: str | None = Field(None, max_length=2000)
     auto_backup: bool | None = None
     backups_keep: int | None = Field(None, ge=1, le=100)
+    backup_interval_hours: int | None = Field(None, ge=0, le=168, description="0 — без расписания")
 
 
 class CommandRequest(BaseModel):
     command: str = Field(..., min_length=1, max_length=500)
+
+
+class PlayerRequest(BaseModel):
+    name: str = Field(..., min_length=3, max_length=16, description="Ник игрока Minecraft")
 
 
 class ModRequest(BaseModel):
@@ -109,6 +114,38 @@ def command(name: str, request: CommandRequest):
 @router.get("/hosting/servers/{name}/console", response_model=list[str])
 def console(name: str, lines: int = Query(300, ge=1, le=3000)):
     return HostingManager.console(name, lines)
+
+
+@router.get("/hosting/servers/{name}/console_lines")
+def console_lines(name: str, lines: int = Query(300, ge=1, le=3000)):
+    """Та же консоль, но разобранная по строкам — для подсветки в интерфейсе."""
+    return hosting.console_lines(name, lines)
+
+
+# --- Белый список и права оператора ---------------------------------------------------------
+@router.get("/hosting/servers/{name}/players")
+def server_players(name: str):
+    return hosting.players(name)
+
+
+@router.post("/hosting/servers/{name}/whitelist")
+def add_to_whitelist(name: str, request: PlayerRequest):
+    return hosting.set_whitelist(name, request.name, True)
+
+
+@router.delete("/hosting/servers/{name}/whitelist/{player}")
+def remove_from_whitelist(name: str, player: str):
+    return hosting.set_whitelist(name, player, False)
+
+
+@router.post("/hosting/servers/{name}/ops")
+def add_operator(name: str, request: PlayerRequest):
+    return hosting.set_operator(name, request.name, True)
+
+
+@router.delete("/hosting/servers/{name}/ops/{player}")
+def remove_operator(name: str, player: str):
+    return hosting.set_operator(name, player, False)
 
 
 @router.get("/hosting/servers/{name}/properties")

@@ -33,6 +33,19 @@ Item {
         const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60
         return (h ? h + ":" : "") + (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s
     }
+    // Подсветка консоли сервера: ошибки и предупреждения, вход и выход игроков, свои команды
+    function consoleColor(kind) {
+        switch (kind) {
+        case "error": return NxTheme.danger
+        case "warn": return NxTheme.warning
+        case "join": return NxTheme.success
+        case "leave": return NxTheme.muted
+        case "ready": return NxTheme.success
+        case "command":
+        case "address": return NxTheme.accent
+        default: return NxTheme.text
+        }
+    }
 
     Connections {
         target: Shell
@@ -291,6 +304,7 @@ Item {
                     onClicked: page.running || page.starting ? Network.stop() : Network.start()
                 }
                 NxButton { variant: "ghost"; iconName: "terminal"; text: I18n.t("q.console"); onClicked: consoleDrawer.open() }
+                NxButton { variant: "ghost"; iconName: "users"; text: I18n.t("q.players"); onClicked: { Network.loadPlayers(); playersDrawer.open() } }
                 NxButton { variant: "ghost"; iconName: "archive"; text: I18n.t("q.backups"); onClicked: { Network.loadBackups(); backupsDrawer.open() } }
                 NxButton { variant: "ghost"; iconName: "sliders"; text: I18n.t("q.server_settings"); onClicked: { Network.loadProps(); propsDrawer.open() } }
                 NxButton {
@@ -313,9 +327,19 @@ Item {
         onOpened: Network.setConsoleOpen(true)
         onClosed: Network.setConsoleOpen(false)
 
+        Item {
+            width: consoleDrawer.bodyWidth
+            height: 32
+            NxCheckbox {
+                anchors.verticalCenter: parent.verticalCenter
+                text: I18n.t("q.console_problems")
+                checked: Network.consoleProblemsOnly
+                onToggled: Network.setConsoleProblemsOnly(checked)
+            }
+        }
         Rectangle {
             width: consoleDrawer.bodyWidth
-            height: parent.height - 8
+            height: parent.height - 40
             radius: NxTheme.rButton
             color: NxTheme.bg
             ListView {
@@ -323,19 +347,24 @@ Item {
                 anchors.fill: parent
                 anchors.margins: 8
                 clip: true
-                model: Network.console
+                model: Network.consoleLines
                 onCountChanged: positionViewAtEnd()
                 C.ScrollBar.vertical: NxScrollBar {}
                 delegate: Text {
-                    required property string modelData
+                    required property var modelData
                     width: consoleList.width
-                    text: modelData
-                    color: modelData.indexOf("WARN") >= 0 ? NxTheme.warning : modelData.indexOf("ERROR") >= 0 ? NxTheme.danger : NxTheme.text
+                    text: modelData.text
+                    color: page.consoleColor(modelData.kind)
                     font.family: NxTheme.fontMono
                     font.pixelSize: 12
+                    font.bold: modelData.kind === "error" || modelData.kind === "join" || modelData.kind === "command"
                     wrapMode: Text.WrapAnywhere
                 }
-                NxText { visible: consoleList.count === 0; text: I18n.t("q.console_empty"); muted: true }
+                NxText {
+                    visible: consoleList.count === 0
+                    text: Network.consoleProblemsOnly ? I18n.t("q.no_lines") : I18n.t("q.console_empty")
+                    muted: true
+                }
             }
         }
         footer: Row {
@@ -361,6 +390,37 @@ Item {
         title: I18n.t("q.backups")
         subtitle: page.own.name || ""
         property string target: ""
+        // Расписание: копия раз в N часов, пока сервер работает; лишние автокопии удаляются
+        NxSettingGroup {
+            width: backupsDrawer.bodyWidth
+            NxSettingRow {
+                first: true
+                label: I18n.t("q.backup_schedule")
+                NxDropdown {
+                    width: 150
+                    alignRight: true
+                    model: [{ value: "0", label: I18n.t("q.backup_off") },
+                            { value: "1", label: I18n.tf("q.backup_every_h", { n: 1 }) },
+                            { value: "2", label: I18n.tf("q.backup_every_h", { n: 2 }) },
+                            { value: "3", label: I18n.tf("q.backup_every_h", { n: 3 }) },
+                            { value: "6", label: I18n.tf("q.backup_every_h", { n: 6 }) },
+                            { value: "12", label: I18n.tf("q.backup_every_h", { n: 12 }) },
+                            { value: "24", label: I18n.tf("q.backup_every_h", { n: 24 }) }]
+                    value: String(page.own.backupInterval || 0)
+                    onActivated: v => Network.setBackupInterval(parseInt(v))
+                }
+            }
+            NxSettingRow {
+                label: I18n.t("q.backups_keep")
+                NxTextField {
+                    width: 80
+                    mono: true
+                    text: String(page.own.backupsKeep || 5)
+                    onAccepted: Network.setBackupsKeep(parseInt(text) || 5)
+                    input.onEditingFinished: Network.setBackupsKeep(parseInt(text) || 5)
+                }
+            }
+        }
         NxText {
             visible: Network.backups.length === 0
             width: backupsDrawer.bodyWidth
@@ -403,6 +463,115 @@ Item {
             iconName: "archive"
             text: I18n.t("q.backup_now")
             onClicked: Network.createBackup()
+        }
+    }
+
+    // --- Игроки: белый список и операторы ---
+    NxDrawer {
+        id: playersDrawer
+        title: I18n.t("q.players")
+        subtitle: page.own.name || ""
+        onOpened: Network.loadPlayers()
+        NxText {
+            width: playersDrawer.bodyWidth
+            text: I18n.t("q.players_hint")
+            muted: true
+            font.pixelSize: 12
+            lineHeight: 16
+            wrapMode: Text.Wrap
+            elide: Text.ElideNone
+        }
+        NxText {
+            width: playersDrawer.bodyWidth
+            text: Network.serverPlayers.onlineMode ? I18n.t("q.online_uuid_hint") : I18n.t("q.offline_uuid_hint")
+            muted: true
+            font.pixelSize: 12
+            lineHeight: 16
+            wrapMode: Text.Wrap
+            elide: Text.ElideNone
+        }
+        NxText {
+            visible: !Network.serverPlayers.whiteList
+            width: playersDrawer.bodyWidth
+            text: I18n.t("q.whitelist_off_hint")
+            color: NxTheme.warning
+            font.pixelSize: 12
+            lineHeight: 16
+            wrapMode: Text.Wrap
+            elide: Text.ElideNone
+        }
+        Item { width: 1; height: 8 }
+        NxText {
+            visible: Network.playerRows.length === 0
+            width: playersDrawer.bodyWidth
+            text: I18n.t("q.no_players")
+            muted: true
+            wrapMode: Text.Wrap
+            elide: Text.ElideNone
+        }
+        Repeater {
+            model: Network.playerRows
+            delegate: Rectangle {
+                id: pl
+                required property var modelData
+                width: playersDrawer.bodyWidth
+                height: 52
+                radius: NxTheme.rButton
+                color: ph2.hovered ? NxTheme.fill1 : "transparent"
+                HoverHandler { id: ph2 }
+                Row {
+                    x: 8
+                    spacing: 10
+                    anchors.verticalCenter: parent.verticalCenter
+                    NxCover { anchors.verticalCenter: parent.verticalCenter; width: 28; height: 28; radius: 4; source: "image://nx/head/" + (pl.modelData.name.length * 7 + pl.modelData.name.charCodeAt(0)) }
+                    Column {
+                        anchors.verticalCenter: parent.verticalCenter
+                        NxText { text: pl.modelData.name; variant: "strong" }
+                        NxText {
+                            text: [pl.modelData.whitelisted ? I18n.t("q.whitelist") : "", pl.modelData.op ? I18n.t("q.op_short") : ""].filter(x => x).join(" · ")
+                            muted: true
+                            font.pixelSize: 12
+                            lineHeight: 16
+                        }
+                    }
+                }
+                Row {
+                    anchors.right: parent.right
+                    anchors.rightMargin: 8
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 8
+                    NxCheckbox {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: I18n.t("q.operators")
+                        checked: pl.modelData.op
+                        onToggled: Network.setOperator(pl.modelData.name, checked)
+                    }
+                    NxIconButton {
+                        anchors.verticalCenter: parent.verticalCenter
+                        small: true
+                        iconName: "trash"
+                        tip: I18n.t("q.remove")
+                        onClicked: Network.removePlayer(pl.modelData.name)
+                    }
+                }
+            }
+        }
+        footer: Row {
+            x: 24; y: 16
+            width: parent.width - 48
+            spacing: 8
+            NxTextField {
+                id: nick
+                width: parent.width - addPlayer.width - 8
+                placeholder: I18n.t("q.player_nick")
+                onAccepted: if (text !== "") { Network.setWhitelisted(text, true); text = "" }
+            }
+            NxButton {
+                id: addPlayer
+                text: I18n.t("q.add")
+                enabled: nick.text !== ""
+                onClicked: { Network.setWhitelisted(nick.text, true); nick.text = "" }
+            }
         }
     }
 

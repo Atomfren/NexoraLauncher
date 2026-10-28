@@ -111,6 +111,28 @@ def normalize_property(key: str, value: Any) -> str | None:
     return text[:200]
 
 
+# Виды строк консоли, которые считаются проблемой (фильтр «только проблемы»)
+CONSOLE_PROBLEM_KINDS = ("error", "warn")
+# Интервалы бэкапов по расписанию, в часах (0 — расписание выключено)
+BACKUP_INTERVALS = (0, 1, 2, 3, 6, 12, 24)
+
+
+def console_rows(lines: list[dict], problems_only: bool = False) -> list[dict]:
+    """Строки консоли для интерфейса: вид (kind) задаёт подсветку, фильтр оставляет только проблемы."""
+    rows = [{"text": line.get("text", ""), "kind": line.get("kind", "plain"), "level": line.get("level", ""),
+             "time": line.get("time", ""), "message": line.get("message", ""), "player": line.get("player", "")}
+            for line in lines]
+    return [r for r in rows if r["kind"] in CONSOLE_PROBLEM_KINDS] if problems_only else rows
+
+
+def player_rows(data: dict) -> list[dict]:
+    """Белый список и операторы в одну таблицу: {name, whitelisted, op}."""
+    whitelist = {str(n).lower(): str(n) for n in (data.get("whitelist") or [])}
+    ops = {str(n).lower(): str(n) for n in (data.get("ops") or [])}
+    return [{"name": whitelist.get(key) or ops[key], "whitelisted": key in whitelist, "op": key in ops}
+            for key in sorted(set(whitelist) | set(ops))]
+
+
 def ping_kind(ms: int | None) -> str:
     if ms is None:
         return "off"
@@ -124,6 +146,7 @@ class Network(QObject):
     backupsChanged = Signal()
     propsChanged = Signal()
     modsChanged = Signal()
+    playersChanged = Signal()
 
     def __init__(self, api: ApiClient, shell: Shell, library: Library, parent: QObject | None = None):
         super().__init__(parent)
@@ -135,7 +158,11 @@ class Network(QObject):
         self._own: list[dict] = []
         self._selected_own = ""
         self._console: list[str] = []
+        self._console_lines: list[dict] = []
+        self._console_problems_only = False
         self._console_open = False
+        self._players: dict = {}
+        self._player_rows: list[dict] = []
         self._backups: list[dict] = []
         self._props: list[dict] = []
         self._mods: list[dict] = []
@@ -165,6 +192,26 @@ class Network(QObject):
     @Property("QVariantList", notify=consoleChanged)
     def console(self) -> list[str]:
         return self._console
+
+    @Property("QVariantList", notify=consoleChanged)
+    def consoleLines(self) -> list[dict]:
+        """Строки консоли с подсветкой (с учётом фильтра «только проблемы»)."""
+        return console_rows(self._console_lines, self._console_problems_only)
+
+    @Property(bool, notify=consoleChanged)
+    def consoleProblemsOnly(self) -> bool:
+        return self._console_problems_only
+
+    @Property("QVariantMap", notify=playersChanged)
+    def serverPlayers(self) -> dict:
+        """Состояние белого списка: onlineMode, whiteList, running."""
+        return {"onlineMode": bool(self._players.get("online_mode")),
+                "whiteList": bool(self._players.get("white_list")),
+                "running": bool(self._players.get("running"))}
+
+    @Property("QVariantList", notify=playersChanged)
+    def playerRows(self) -> list[dict]:
+        return self._player_rows
 
     @Property("QVariantList", notify=backupsChanged)
     def backups(self) -> list[dict]:
@@ -285,7 +332,10 @@ class Network(QObject):
                 "address": item.get("public_address", ""), "lan": item.get("lan_address", ""),
                 "local": item.get("local_address", ""), "players": item.get("players") or [],
                 "uptime": int(item.get("uptime_seconds") or 0), "memory": int(item.get("max_memory") or 0),
-                "seed": art.seed_of(item["name"]), "tunnel": bool(item.get("tunnel", True))}
+                "seed": art.seed_of(item["name"]), "tunnel": bool(item.get("tunnel", True)),
+                "autoBackup": bool(item.get("auto_backup", True)),
+                "backupsKeep": int(item.get("backups_keep") or 5),
+                "backupInterval": int(item.get("backup_interval_hours") or 0)}
 
     @Slot(str)
     def selectOwn(self, name: str) -> None:
@@ -338,17 +388,26 @@ class Network(QObject):
         else:
             self._console_timer.stop()
 
+    @Slot(bool)
+    def setConsoleProblemsOnly(self, value: bool) -> None:
+        """Фильтр консоли: оставить только предупреждения и ошибки."""
+        if value != self._console_problems_only:
+            self._console_problems_only = value
+            self.consoleChanged.emit()
+
     def _fetch_console(self) -> None:
         name = self._own_name()
         if not name:
             return
 
-        def done(lines: list[str]) -> None:
-            if lines != self._console:
-                self._console = lines
+        def done(lines: list[dict]) -> None:
+            if lines != self._console_lines:
+                self._console_lines = lines
+                self._console = [line.get("text", "") for line in lines]
                 self.consoleChanged.emit()
 
-        run_async(lambda: self.api.server_console(name, 400), done, lambda _m: None, owner=self, background=True)
+        run_async(lambda: self.api.server_console_lines(name, 400), done, lambda _m: None, owner=self,
+                  background=True)
 
     @Slot(str)
     def sendCommand(self, command: str) -> None:
@@ -397,6 +456,87 @@ class Network(QObject):
 
         run_async(lambda: self.api.restore_server_backup(name, filename), started,
                   lambda msg: self.shell.toast(msg, "err"), owner=self)
+
+    @Slot(int)
+    def setBackupInterval(self, hours: int) -> None:
+        """Расписание бэкапов: раз в N часов, 0 — выключить."""
+        name = self._own_name()
+        if not name or hours not in BACKUP_INTERVALS:
+            return
+
+        def done(_r) -> None:
+            self.refreshOwn()
+            self.shell.toast(t("q.backup_schedule_off") if hours == 0
+                             else t("q.backup_schedule_on", n=hours))
+
+        run_async(lambda: self.api.update_hosted_server(name, backup_interval_hours=hours), done,
+                  lambda msg: self.shell.toast(msg, "err"), owner=self)
+
+    @Slot(int)
+    def setBackupsKeep(self, keep: int) -> None:
+        """Сколько автоматических копий хранить."""
+        name = self._own_name()
+        keep = max(1, min(100, int(keep)))
+        if not name or keep == int(self.own.get("backupsKeep") or 0):
+            return
+        run_async(lambda: self.api.update_hosted_server(name, backups_keep=keep),
+                  lambda _r: (self.refreshOwn(), self.shell.toast(t("q.saved"))),
+                  lambda msg: self.shell.toast(msg, "err"), owner=self)
+
+    # --- Белый список и права оператора -------------------------------------------------------------
+    @Slot()
+    def loadPlayers(self) -> None:
+        name = self._own_name()
+        if not name:
+            return
+        run_async(lambda: self.api.server_players(name), self._players_done,
+                  lambda msg: self.shell.toast(msg, "err"), owner=self)
+
+    def _players_done(self, data: dict) -> None:
+        self._players = data if isinstance(data, dict) else {}
+        self._player_rows = player_rows(self._players)
+        self.playersChanged.emit()
+
+    def _player_action(self, call) -> None:
+        run_async(call, self._players_done, lambda msg: self.shell.toast(msg, "err"), owner=self)
+
+    @Slot(str, bool)
+    def setWhitelisted(self, player: str, enabled: bool) -> None:
+        name = self._own_name()
+        player = player.strip()
+        if not name or not player:
+            return
+        self._player_action(lambda: self.api.add_to_whitelist(name, player) if enabled
+                            else self.api.remove_from_whitelist(name, player))
+
+    @Slot(str, bool)
+    def setOperator(self, player: str, enabled: bool) -> None:
+        name = self._own_name()
+        player = player.strip()
+        if not name or not player:
+            return
+        self._player_action(lambda: self.api.add_server_operator(name, player) if enabled
+                            else self.api.remove_server_operator(name, player))
+
+    @Slot(str)
+    def removePlayer(self, player: str) -> None:
+        """Убирает игрока и из белого списка, и из операторов."""
+        name = self._own_name()
+        player = player.strip()
+        row = next((r for r in self._player_rows if r["name"] == player), None)
+        if not name or not row:
+            return
+
+        def done(data: dict) -> None:
+            self._players_done(data)
+            if row["whitelisted"]:
+                self._player_action(lambda: self.api.remove_from_whitelist(name, player))
+
+        if row["op"]:
+            run_async(lambda: self.api.remove_server_operator(name, player), done,
+                      lambda msg: self.shell.toast(msg, "err"), owner=self)
+        elif row["whitelisted"]:
+            self._player_action(lambda: self.api.remove_from_whitelist(name, player))
 
     # --- Настройки сервера (server.properties) -----------------------------------------------------
     @Slot()

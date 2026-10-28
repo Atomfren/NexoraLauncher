@@ -7,12 +7,16 @@
   ни белый IP, ни проброс портов, ни аккаунт не нужны;
 - лаунчер читает консоль сервера, находит строку ``Domain assigned: <домен>``
   и показывает адрес, который можно отправить друзьям;
-- после каждой остановки мир сохраняется в резервную копию (``<data>/server-backups``).
+- после каждой остановки мир сохраняется в резервную копию (``<data>/server-backups``),
+  а при включённом расписании — ещё и раз в N часов, пока сервер работает;
+- белый список и права оператора правятся из лаунчера: на запущенном сервере командой
+  в консоль, на остановленном — прямо в ``whitelist.json`` и ``ops.json``.
 
 Структура: ``<data>/servers/<имя>/`` — server.json (настройки лаунчера), ядро,
 eula.txt, server.properties, mods/ или plugins/, world/ и т. д.
 """
 
+import hashlib
 import re
 import shlex
 import shutil
@@ -20,6 +24,7 @@ import socket
 import subprocess
 import threading
 import time
+import uuid
 from collections import deque
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
@@ -42,6 +47,7 @@ FABRIC_META = "https://meta.fabricmc.net/v2"
 MOJANG_MANIFEST = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 PAPER_FILL = "https://fill.papermc.io/v3/projects/paper"
 PURPUR_API = "https://api.purpurmc.org/v2/purpur"
+MOJANG_PROFILE = "https://api.mojang.com/users/profiles/minecraft/"
 SERVER_JAR = "fabric-server-launch.jar"
 PLAIN_SERVER_JAR = "server.jar"
 TUNNEL_MOD = "e4mc"
@@ -51,12 +57,28 @@ _LOG_LINES = 3000
 _STOP_TIMEOUT = 45
 _SAVE_TIMEOUT = 30
 BACKUP_FILES = ("server.properties", "whitelist.json", "ops.json", "banned-players.json", "banned-ips.json")
+# Шаг расписания бэкапов: интервал задаётся в часах, проверка — раз в минуту.
+# В тестах оба значения уменьшаются, чтобы не ждать настоящий час.
+BACKUP_INTERVAL_SECONDS = 3600
+BACKUP_TICK_SECONDS = 60
+OP_LEVEL = 4  # уровень прав оператора по умолчанию (как в самом Minecraft)
 
 _DOMAIN_RE = re.compile(r"Domain assigned: (?P<domain>[\w.\-]+)")
 _DONE_RE = re.compile(r"\]: Done \(\d")
 _SAVED_RE = re.compile(r"Saved the game|All dimensions are saved")
 _JOIN_RE = re.compile(r"\]: (?P<name>\w{2,16}) joined the game")
 _LEAVE_RE = re.compile(r"\]: (?P<name>\w{2,16}) left the game")
+_NICK_RE = re.compile(r"^\w{3,16}$")
+
+# Разбор строки консоли сервера — тем же подходом, что и логи игры в log_analyzer:
+# [12:00:00] [Server thread/INFO]: сообщение
+_CONSOLE_RE = re.compile(
+    r"^\[(?P<time>[^\]]{1,40})\] \[(?P<thread>.+?)/(?P<level>TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\]"
+    r"(?: \[(?P<logger>[^\]]*)\]| \((?P<logger2>[^)]*)\))?:? ?(?P<msg>.*)$")
+_CONSOLE_LEVELS = {"WARNING": "WARN", "FATAL": "ERROR", "TRACE": "DEBUG"}
+# Строки стек-трейса и имена исключений: уровня у них нет, но это тоже ошибка
+_TRACE_RE = re.compile(r"^(?:\s+at |\s*\.\.\. \d+ more|Caused by:|\s+Suppressed:|\t)")
+_EXCEPTION_RE = re.compile(r"^(?:[a-z][\w$]*\.)+[A-Z][\w$]*(?:Exception|Error|Throwable)\b")
 
 DEFAULT_PROPERTIES = {
     "motd": "Сервер на NexoraLauncher",
@@ -169,6 +191,7 @@ class HostedServer:
     installed: bool = False
     auto_backup: bool = True
     backups_keep: int = 5
+    backup_interval_hours: int = 0  # 0 — бэкапы по расписанию выключены
 
     # --- Совместимость с ContentManager.install_into -----------------------------
     @property
@@ -241,6 +264,7 @@ class ServerRuntime:
     exit_code: int | None = None
     saved: threading.Event = field(default_factory=threading.Event)
     finished: threading.Event = field(default_factory=threading.Event)  # поток консоли завершён (и бэкап)
+    backup_stop: threading.Event = field(default_factory=threading.Event)  # сигнал расписанию бэкапов
 
 
 class HostingManager:
@@ -388,7 +412,7 @@ class HostingManager:
     @staticmethod
     def update(name: str, **changes: Any) -> HostedServer:
         server = HostingManager.get(name)
-        for key in ("max_memory", "tunnel", "jvm_args", "auto_backup", "backups_keep"):
+        for key in ("max_memory", "tunnel", "jvm_args", "auto_backup", "backups_keep", "backup_interval_hours"):
             if key in changes and changes[key] is not None:
                 setattr(server, key, changes[key])
         if changes.get("eula_accepted"):
@@ -468,8 +492,38 @@ class HostingManager:
             HostingManager._runtimes[name] = runtime
         threading.Thread(target=HostingManager._pump, args=(name, runtime), daemon=True,
                          name=f"server-{name}").start()
+        threading.Thread(target=HostingManager._backup_schedule, args=(name, runtime), daemon=True,
+                         name=f"server-backup-{name}").start()
         logger.info(f"Сервер «{name}» запускается (pid {process.pid})")
         return HostingManager.status(name)
+
+    @staticmethod
+    def _backup_schedule(name: str, runtime: ServerRuntime) -> None:
+        """Бэкапы по расписанию, пока сервер работает.
+
+        Настройки перечитываются на каждом круге, поэтому новый интервал применяется
+        без перезапуска сервера. Сам бэкап просит мир сохраниться и ставит запись на паузу
+        (это делает ``create_backup``), а лишние автокопии удаляются по лимиту ``backups_keep``.
+        """
+        last = time.time()
+        while not runtime.backup_stop.wait(BACKUP_TICK_SECONDS):
+            if runtime.exit_code is not None:
+                return
+            try:
+                hours = HostingManager.get(name).backup_interval_hours
+            except (NotFoundError, BadRequestError):
+                return  # сервер удалён
+            # Расписание выключено или мир ещё не загрузился — отсчёт начинаем заново
+            if hours <= 0 or runtime.state != "running":
+                last = time.time()
+                continue
+            if time.time() - last < hours * BACKUP_INTERVAL_SECONDS:
+                continue
+            last = time.time()
+            try:
+                create_backup(name, reason="auto")
+            except Exception as e:  # noqa: BLE001 — расписание не должно падать из-за одной копии
+                logger.warning(f"Бэкап по расписанию «{name}» не удался: {e}")
 
     @staticmethod
     def build_command(server: HostedServer, java: str) -> list[str]:
@@ -504,6 +558,7 @@ class HostingManager:
         except (OSError, ValueError) as e:
             logger.warning(f"Ошибка чтения консоли сервера «{name}»: {e}")
         runtime.exit_code = runtime.process.wait()
+        runtime.backup_stop.set()  # расписание бэкапов больше не нужно
         runtime.state = "stopped" if runtime.exit_code == 0 or runtime.state == "stopping" else "crashed"
         runtime.players.clear()
         logger.info(f"Сервер «{name}» остановлен (код {runtime.exit_code})")
@@ -586,6 +641,159 @@ class HostingManager:
         runtime = HostingManager._runtimes.get(name)
         return list(runtime.lines)[-lines:] if runtime else []
 
+
+# --- Консоль с подсветкой --------------------------------------------------------------------
+def classify_console_line(line: str) -> dict[str, Any]:
+    """Строка консоли сервера → {text, time, level, kind, message, player}.
+
+    ``kind`` — для подсветки в интерфейсе: command (наша команда), error, warn,
+    join / leave (вход и выход игроков), ready (сервер поднялся), address (адрес туннеля),
+    plain (всё остальное).
+    """
+    row: dict[str, Any] = {"text": line, "time": "", "level": "", "kind": "plain",
+                           "message": line, "player": ""}
+    if line.startswith("> "):  # команда, отправленная из лаунчера
+        return {**row, "kind": "command", "message": line[2:]}
+    if match := _CONSOLE_RE.match(line):
+        level = match.group("level").upper()
+        row["time"] = match.group("time")
+        row["level"] = _CONSOLE_LEVELS.get(level, level)
+        row["message"] = match.group("msg")
+    elif _TRACE_RE.match(line) or _EXCEPTION_RE.match(line):
+        row["level"] = "ERROR"  # продолжение стек-трейса — уровня в строке нет
+    if row["level"] == "ERROR":
+        row["kind"] = "error"
+    elif row["level"] == "WARN":
+        row["kind"] = "warn"
+    if match := _JOIN_RE.search(line):
+        row["kind"], row["player"] = "join", match.group("name")
+    elif match := _LEAVE_RE.search(line):
+        row["kind"], row["player"] = "leave", match.group("name")
+    elif _DOMAIN_RE.search(line):
+        row["kind"] = "address"
+    elif _DONE_RE.search(line):
+        row["kind"] = "ready"
+    return row
+
+
+def console_lines(name: str, lines: int = 300) -> list[dict[str, Any]]:
+    """Консоль сервера, разобранная по строкам — для подсветки в интерфейсе."""
+    return [classify_console_line(line) for line in HostingManager.console(name, lines)]
+
+
+# --- Белый список и права оператора ------------------------------------------------------------
+def _check_nick(nick: str) -> str:
+    nick = nick.strip()
+    if not _NICK_RE.match(nick):
+        raise BadRequestError("Ник игрока: от 3 до 16 символов — латиница, цифры и «_»")
+    return nick
+
+
+def offline_uuid(nick: str) -> str:
+    """UUID офлайн-игрока. Считается так же, как его считает сам сервер:
+    MD5 от «OfflinePlayer:<ник>» с битами версии 3 (Java ``UUID.nameUUIDFromBytes``)."""
+    digest = bytearray(hashlib.md5(f"OfflinePlayer:{nick}".encode()).digest())
+    digest[6] = (digest[6] & 0x0F) | 0x30
+    digest[8] = (digest[8] & 0x3F) | 0x80
+    return str(uuid.UUID(bytes=bytes(digest)))
+
+
+def mojang_uuid(nick: str) -> str:
+    """UUID лицензионного игрока — из профиля на api.mojang.com (нужен интернет)."""
+    try:
+        with httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=20, follow_redirects=True) as client:
+            resp = client.get(MOJANG_PROFILE + nick)
+    except httpx.HTTPError as e:
+        raise ExternalServiceError(f"Mojang недоступен, UUID игрока не узнать: {e}") from e
+    if resp.status_code in (204, 404):
+        raise NotFoundError(f"Лицензионного игрока «{nick}» у Mojang нет — проверьте ник")
+    if resp.status_code != 200:
+        raise ExternalServiceError(f"Mojang вернул HTTP {resp.status_code}")
+    try:
+        return str(uuid.UUID(resp.json().get("id") or ""))
+    except (ValueError, AttributeError) as e:
+        raise ExternalServiceError(f"Mojang вернул неожиданный ответ: {e}") from e
+
+
+def _online_mode(server: HostedServer) -> bool:
+    return read_properties(server.path / "server.properties").get("online-mode", "false").strip().lower() == "true"
+
+
+def _player_uuid(server: HostedServer, nick: str) -> str:
+    """UUID игрока для whitelist.json и ops.json.
+
+    При ``online-mode=true`` сервер сверяет игроков с Mojang, поэтому нужен настоящий UUID
+    из профиля; при ``online-mode=false`` он считается из ника локально.
+    """
+    return mojang_uuid(nick) if _online_mode(server) else offline_uuid(nick)
+
+
+def _read_entries(path: Path) -> list[dict[str, Any]]:
+    data = read_json(path)
+    if not isinstance(data, list):
+        return []
+    return [e for e in data if isinstance(e, dict) and str(e.get("name", "")).strip()]
+
+
+def players(name: str) -> dict[str, Any]:
+    """Белый список и операторы сервера — как их видит сам Minecraft."""
+    server = HostingManager.get(name)
+    props = read_properties(server.path / "server.properties")
+    return {
+        "online_mode": props.get("online-mode", "false").strip().lower() == "true",
+        "white_list": props.get("white-list", "false").strip().lower() == "true",
+        "running": HostingManager.runtime(name) is not None,
+        "whitelist": sorted((e["name"] for e in _read_entries(server.path / "whitelist.json")), key=str.lower),
+        "ops": sorted((e["name"] for e in _read_entries(server.path / "ops.json")), key=str.lower),
+    }
+
+
+_PLAYER_COMMANDS = {("whitelist", True): "whitelist add", ("whitelist", False): "whitelist remove",
+                    ("ops", True): "op", ("ops", False): "deop"}
+
+
+def _change_player_list(name: str, kind: str, nick: str, enabled: bool) -> dict[str, Any]:
+    """Правит whitelist.json или ops.json и, если сервер запущен, дублирует изменение командой.
+
+    Файл правится всегда: так список виден в лаунчере сразу и не теряется после перезапуска.
+    Запущенный сервер держит список в памяти и перезапишет файл тем же содержимым, поэтому
+    порядок записи не важен — результат один и тот же.
+    """
+    server = HostingManager.get(name)
+    nick = _check_nick(nick)
+    path = server.path / ("whitelist.json" if kind == "whitelist" else "ops.json")
+    with HostingManager._lock:
+        entries = _read_entries(path)
+        existing = next((e for e in entries if str(e.get("name", "")).lower() == nick.lower()), None)
+        if enabled and existing is None:
+            entry: dict[str, Any] = {"uuid": _player_uuid(server, nick), "name": nick}
+            if kind == "ops":
+                level = read_properties(server.path / "server.properties").get("op-permission-level", "")
+                entry["level"] = int(level) if level.isdigit() else OP_LEVEL
+                entry["bypassesPlayerLimit"] = False
+            entries.append(entry)
+        elif not enabled and existing is not None:
+            entries = [e for e in entries if e is not existing]
+        else:
+            return players(name)  # уже в нужном состоянии — ничего не делаем
+        atomic_write_json(path, entries)
+    if HostingManager.runtime(name):
+        try:
+            HostingManager.send_command(name, f"{_PLAYER_COMMANDS[(kind, enabled)]} {nick}")
+        except (BadRequestError, ConflictError) as e:
+            logger.warning(f"Сервер «{name}»: команда не прошла, список применится после перезапуска: {e}")
+    logger.info(f"Сервер «{name}»: {kind} {'+' if enabled else '-'}{nick}")
+    return players(name)
+
+
+def set_whitelist(name: str, nick: str, enabled: bool) -> dict[str, Any]:
+    """Добавляет игрока в белый список или убирает из него."""
+    return _change_player_list(name, "whitelist", nick, enabled)
+
+
+def set_operator(name: str, nick: str, enabled: bool) -> dict[str, Any]:
+    """Выдаёт права оператора или снимает их."""
+    return _change_player_list(name, "ops", nick, enabled)
 
 
 # --- Моды сервера и сборка для друзей ------------------------------------------------------
