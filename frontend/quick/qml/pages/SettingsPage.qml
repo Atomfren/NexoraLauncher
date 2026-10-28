@@ -441,8 +441,9 @@ Item {
                 visible: page.section === "about"
                 NxSettingRow {
                     first: true
-                    label: I18n.t("q.source_code")
-                    NxButton { small: true; variant: "ghost"; iconName: "external"; text: I18n.t("q.open"); onClicked: Shell.openUrl("https://github.com/Atomfren/NexoraLauncher") }
+                    // Раньше здесь была ссылка на исходники: код закрыт, обещать их нельзя
+                    label: I18n.t("q.website")
+                    NxButton { small: true; variant: "ghost"; iconName: "external"; text: I18n.t("q.open"); onClicked: Shell.openUrl(Shell.website) }
                 }
                 NxSettingRow {
                     label: I18n.t("q.launcher_logs")

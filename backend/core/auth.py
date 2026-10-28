@@ -5,6 +5,7 @@
 """
 
 import hashlib
+import os
 import threading
 import time
 import uuid as uuidlib
@@ -15,11 +16,13 @@ import minecraft_launcher_lib as mll
 import msal
 from loguru import logger
 
+from backend.core import nexora_account
 from backend.core.errors import AuthRequiredError, BadRequestError, ExternalServiceError, NotFoundError
 from backend.core.tasks import Task, task_manager
 from shared.crypto import TokenVault
 from shared.fsutil import atomic_write_json, read_json
 from shared.paths import get_config_dir
+from shared.version import MS_CLIENT_ID
 
 _AUTHORITY = "https://login.microsoftonline.com/consumers"
 _SCOPES = ["XboxLive.signin"]
@@ -48,11 +51,15 @@ class Account:
     id: str
     username: str
     uuid: str
-    auth_type: str  # offline | microsoft
+    auth_type: str  # offline | microsoft | nexora
     access_token_enc: str = ""
     refresh_token_enc: str = ""
     expires_at: float = 0.0
     skin_url: str = ""
+    # Плащ и модель скина приходят с сервера аккаунтов Nexora; у остальных типов пусто
+    cape_url: str = ""
+    skin_slim: bool = False
+    email: str = ""
     added_at: float = 0.0
 
     @property
@@ -77,8 +84,10 @@ class Account:
             "uuid": self.uuid,
             "auth_type": self.auth_type,
             "skin_url": self.skin_url,
+            "cape_url": self.cape_url,
+            "email": self.email,
             "active": self.id == active_id,
-            "expired": self.auth_type == "microsoft" and time.time() >= self.expires_at,
+            "expired": self.auth_type in ("microsoft", "nexora") and time.time() >= self.expires_at,
         }
 
 
@@ -163,12 +172,16 @@ class AuthManager:
     def remove(account_id: str) -> None:
         with _lock:
             accounts, active = AccountStore.load()
-            remaining = [a for a in accounts if a.id != account_id]
-            if len(remaining) == len(accounts):
+            removed = next((a for a in accounts if a.id == account_id), None)
+            if removed is None:
                 raise NotFoundError("Аккаунт не найден")
+            remaining = [a for a in accounts if a.id != account_id]
             if active == account_id:
                 active = remaining[0].id if remaining else ""
             AccountStore.save(remaining, active)
+        # Выход на сервере — уже без блокировки: это сеть, и удаление от него не зависит
+        if removed.auth_type == "nexora" and removed.access_token:
+            nexora_account.logout(removed.access_token)
 
     @staticmethod
     def _upsert(account: Account) -> Account:
@@ -197,12 +210,103 @@ class AuthManager:
                           auth_type="offline", added_at=time.time())
         return AuthManager._upsert(account)
 
+    # --- Nexora (свой сервер аккаунтов) --------------------------------------
+    @staticmethod
+    def _apply_profile(account: Account, profile: dict[str, Any]) -> Account:
+        """Переносит в аккаунт то, что знает о нём сервер: ник, UUID, скин, плащ, почту."""
+        account.username = str(profile.get("username") or account.username)
+        account.uuid = str(profile.get("uuid") or account.uuid)
+        account.skin_url = str(profile.get("skin_url") or "")
+        account.cape_url = str(profile.get("cape_url") or "")
+        account.skin_slim = profile.get("skin_model") == "slim"
+        account.email = str(profile.get("email") or account.email)
+        return account
+
+    @staticmethod
+    def _store(account: Account) -> Account:
+        """Сохраняет изменения существующего аккаунта, не трогая выбор активного."""
+        with _lock:
+            accounts, active = AccountStore.load()
+            AccountStore.save([account if a.id == account.id else a for a in accounts], active)
+        return account
+
+    @staticmethod
+    def _nexora_account(session: dict[str, Any]) -> Account:
+        profile = session.get("account") or {}
+        username = str(profile.get("username") or "")
+        if not username or not session.get("token"):
+            raise ExternalServiceError("Сервер аккаунтов ответил без данных аккаунта")
+        account = Account(id=uuidlib.uuid4().hex, username=username, uuid=offline_uuid(username),
+                          auth_type="nexora", added_at=time.time())
+        AuthManager._apply_profile(account, profile)
+        account.set_tokens(session["token"], "", int(session.get("expires_in", 0)))
+        return account
+
+    @staticmethod
+    def nexora_login(login: str, password: str) -> Account:
+        """Вход по нику или почте на сервере аккаунтов Nexora."""
+        account = AuthManager._nexora_account(nexora_account.login(login, password))
+        logger.info(f"Аккаунт Nexora добавлен: {account.username}")
+        return AuthManager._upsert(account)
+
+    @staticmethod
+    def nexora_register(username: str, email: str, password: str) -> Account:
+        """Регистрация на сервере и сразу вход — пароль спрашиваем один раз."""
+        account = AuthManager._nexora_account(nexora_account.register(username, email, password))
+        logger.info(f"Аккаунт Nexora зарегистрирован: {account.username}")
+        return AuthManager._upsert(account)
+
+    @staticmethod
+    def nexora_update(account: Account, profile: dict[str, Any]) -> Account:
+        """Запомнить присланные сервером данные аккаунта (ник, скин, плащ) и сохранить их."""
+        return AuthManager._store(AuthManager._apply_profile(account, profile))
+
+    @staticmethod
+    def nexora_token(account: Account) -> str:
+        """Действующий токен сессии. Сессию, которой осталось меньше недели, продлеваем молча."""
+        if account.auth_type != "nexora":
+            raise BadRequestError("Это не аккаунт Nexora")
+        token = account.access_token
+        now = time.time()
+        if not token or now >= account.expires_at:
+            raise AuthRequiredError("Сессия Nexora истекла. Войдите в аккаунт заново.")
+        if not nexora_account.needs_refresh(account.expires_at, now):
+            return token
+        try:
+            session = nexora_account.refresh(token)
+        except (ExternalServiceError, AuthRequiredError) as e:
+            # Продление — не главное действие: пока токен жив, работаем с ним
+            logger.debug(f"Сессия Nexora не продлена: {e}")
+            return token
+        account.set_tokens(session["token"], "", int(session.get("expires_in", 0)))
+        AuthManager._apply_profile(account, session.get("account") or {})
+        AuthManager._store(account)
+        return session["token"]
+
     # --- Microsoft -----------------------------------------------------------
     @staticmethod
+    def resolve_client_id(configured: str = "") -> str:
+        """Client ID приложения Azure. По порядку: настройка игрока, окружение, сборка.
+
+        Обычному игроку ничего указывать не нужно — работает встроенный в сборку.
+        Своё значение нужно тем, кто собирает лаунчер сам или проверяет новое приложение
+        до выпуска: Microsoft считает входы по приложению, и чужой Client ID брать нельзя.
+        """
+        return (configured or os.environ.get("NEXORA_MS_CLIENT_ID") or MS_CLIENT_ID).strip()
+
+    @staticmethod
+    def microsoft_available(configured: str = "") -> bool:
+        """Есть ли чем входить. Окно аккаунтов спрашивает это, чтобы не предлагать пустую кнопку."""
+        return bool(AuthManager.resolve_client_id(configured))
+
+    @staticmethod
     def _msal_app(client_id: str) -> msal.PublicClientApplication:
+        client_id = AuthManager.resolve_client_id(client_id)
         if not client_id:
             raise BadRequestError(
-                "Не задан Azure Client ID. Укажите его в Настройках → Аккаунт Microsoft."
+                "Вход через Microsoft в этой сборке недоступен: у лаунчера нет своего "
+                "приложения Azure. Войдите через аккаунт Nexora или укажите свой Client ID "
+                "в «Настройках → Аккаунт Microsoft»."
             )
         return msal.PublicClientApplication(client_id, authority=_AUTHORITY)
 
@@ -284,7 +388,11 @@ class AuthManager:
 
     @staticmethod
     def refresh(account: Account, client_id: str) -> Account:
-        """Обновляет токен Minecraft через refresh token Microsoft."""
+        """Обновляет токен Minecraft через refresh token Microsoft (или сессию Nexora)."""
+        if account.auth_type == "nexora":
+            token = AuthManager.nexora_token(account)
+            AuthManager._apply_profile(account, nexora_account.profile(token))
+            return AuthManager._store(account)
         if account.auth_type != "microsoft":
             return account
         refresh_token = account.refresh_token
@@ -314,9 +422,12 @@ class AuthManager:
             raise AuthRequiredError("Добавьте аккаунт, чтобы играть (офлайн или Microsoft).")
         if account.auth_type == "microsoft" and time.time() >= account.expires_at:
             account = AuthManager.refresh(account, client_id)
+        # Аккаунт Nexora для самой игры — обычный офлайн-вход: лицензию он не заменяет,
+        # а токен нашего сервера серверам Mojang ничего не говорит
+        token = account.access_token if account.auth_type == "microsoft" else ""
         return {
             "username": account.username,
             "uuid": account.uuid,
-            "token": account.access_token or "0",
+            "token": token or "0",
             "auth_type": account.auth_type,
         }

@@ -134,7 +134,7 @@ Window {
         onAddAccount: addAccount.open()
         onManage: Shell.navigate("settings", "accounts")
     }
-    AddAccountDialog { id: addAccount }
+    AddAccountDialog { id: addAccount; objectName: "addAccount" }
 
     // Новая версия нашлась сама: при запуске или когда появился интернет
     NxDialog {

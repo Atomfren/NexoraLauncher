@@ -16,12 +16,27 @@ class AccountResponse(BaseModel):
     uuid: str
     auth_type: str
     skin_url: str
+    cape_url: str = ""
+    email: str = ""
     active: bool
     expired: bool
 
 
 class OfflineLoginRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=16)
+
+
+class NexoraLoginRequest(BaseModel):
+    """Вход по нику или почте — сервер принимает и то, и другое."""
+
+    login: str = Field(..., min_length=3, max_length=190)
+    password: str = Field(..., min_length=1, max_length=128)
+
+
+class NexoraRegisterRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=16)
+    email: str = Field(..., min_length=3, max_length=190)
+    password: str = Field(..., min_length=8, max_length=128)
 
 
 class MicrosoftLoginStartResponse(BaseModel):
@@ -49,6 +64,19 @@ def get_active_account():
 @router.post("/auth/offline/login", response_model=AccountResponse, status_code=status.HTTP_201_CREATED)
 def offline_login(request: OfflineLoginRequest):
     return AuthManager.list_accounts_entry(AuthManager.offline_login(request.username))
+
+
+@router.post("/auth/nexora/login", response_model=AccountResponse, status_code=status.HTTP_201_CREATED)
+def nexora_login(request: NexoraLoginRequest):
+    """Вход в аккаунт Nexora (сервер аккаунтов и скинов на nexoralauncher.ru)."""
+    return AuthManager.list_accounts_entry(AuthManager.nexora_login(request.login, request.password))
+
+
+@router.post("/auth/nexora/register", response_model=AccountResponse, status_code=status.HTTP_201_CREATED)
+def nexora_register(request: NexoraRegisterRequest):
+    """Регистрация на сервере аккаунтов и сразу вход."""
+    return AuthManager.list_accounts_entry(
+        AuthManager.nexora_register(request.username, request.email, request.password))
 
 
 @router.post("/auth/microsoft/login/start", response_model=MicrosoftLoginStartResponse)
@@ -79,7 +107,7 @@ class SkinResponse(BaseModel):
     skin: str
     cape: str
     slim: bool
-    source: str  # custom | mojang | default
+    source: str  # custom | nexora | mojang | default
 
 
 class SkinFileRequest(BaseModel):

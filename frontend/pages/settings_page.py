@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 from frontend.theme import apply_theme
 from frontend.widgets import AppContext, Page, button, label, open_path, open_url, show_info
 from shared.i18n import t
-from shared.version import APP_NAME, APP_VERSION
+from shared.version import APP_NAME, APP_VERSION, WEBSITE_URL
 
 _AZURE_HELP = "https://learn.microsoft.com/entra/identity-platform/quickstart-register-app"
 
@@ -140,7 +140,8 @@ class SettingsPage(Page):
         form.addRow(self.check_updates)
         links = QHBoxLayout()
         links.addWidget(button(t("update.check_now"), self._check_updates))
-        links.addWidget(button("GitHub", lambda: open_url("https://github.com/Atomfren/NexoraLauncher"), "ghost"))
+        # Не «GitHub»: код закрыт, ссылка на исходники обещала бы то, чего нет
+        links.addWidget(button(t("q.website"), lambda: open_url(WEBSITE_URL), "ghost"))
         links.addStretch()
         form.addRow(links)
         self.body.addWidget(about)

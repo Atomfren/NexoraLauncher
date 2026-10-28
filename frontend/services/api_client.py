@@ -388,6 +388,13 @@ class ApiClient:
     def offline_login(self, username: str) -> dict:
         return self.post("/auth/offline/login", {"username": username})
 
+    def nexora_login(self, login: str, password: str) -> dict:
+        return self.post("/auth/nexora/login", {"login": login, "password": password})
+
+    def nexora_register(self, username: str, email: str, password: str) -> dict:
+        return self.post("/auth/nexora/register",
+                         {"username": username, "email": email, "password": password})
+
     def microsoft_login_start(self) -> dict:
         return self.post("/auth/microsoft/login/start")
 

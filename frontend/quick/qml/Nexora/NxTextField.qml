@@ -13,6 +13,7 @@ Item {
     property string prefix: ""
     property string kbd: ""
     property bool mono: false
+    property bool password: false
     property bool clearable: iconName === "search"
     signal accepted()
     signal edited()
@@ -72,6 +73,9 @@ Item {
             font.pixelSize: root.mono ? 12 : 13
             clip: true
             selectByMouse: true
+            // Пароль не показываем и не подсказываем копированием: ни точек в буфере, ни «скопировать»
+            echoMode: root.password ? TextInput.Password : TextInput.Normal
+            passwordCharacter: "•"
             onAccepted: root.accepted()
             onTextEdited: root.edited()
             Keys.onEscapePressed: event => { if (root.clearable && text) { text = ""; root.edited() } else event.accepted = false }

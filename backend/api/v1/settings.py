@@ -4,6 +4,7 @@
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
+from backend.core.auth import AuthManager
 from backend.core.java_detector import find_java_installations
 from shared.config import AppConfig
 from shared.paths import get_data_dir, get_instances_dir, get_logs_dir, get_minecraft_dir
@@ -28,6 +29,8 @@ class SettingsResponse(BaseModel):
     check_updates: bool
     gpu_preference: str
     curseforge_key_set: bool = False
+    # Есть ли чем входить через Microsoft: приложение Azure встроено в сборку или задано игроком
+    ms_available: bool = False
 
 
 class SettingsUpdate(BaseModel):
@@ -83,6 +86,7 @@ class GpuInfo(BaseModel):
 def _public(config: AppConfig) -> dict:
     data = config.to_dict()
     data["curseforge_key_set"] = bool(data.pop("curseforge_key_enc", ""))
+    data["ms_available"] = AuthManager.microsoft_available(config.ms_client_id)
     return data
 
 

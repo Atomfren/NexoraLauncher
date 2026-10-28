@@ -41,6 +41,9 @@ def load_fonts() -> tuple[str, str]:
 # Где может стоять боковая панель (выбор в «Настройки → Общие»)
 SIDEBAR_POSITIONS = ("left", "right", "top", "bottom")
 
+# Подпись под ником в списке аккаунтов
+_ACCOUNT_KINDS = {"microsoft": "q.account_microsoft", "nexora": "q.account_nexora"}
+
 
 class I18nBridge(QObject):
     @Slot(str, result=str)
@@ -74,6 +77,7 @@ class Shell(QObject):
     navigateRequested = Signal(str, str)
     addAccountRequested = Signal()
     microsoftChanged = Signal()
+    nexoraChanged = Signal()
 
     def __init__(self, api: ApiClient, dark: bool, fonts: tuple[str, str], parent: QObject | None = None):
         super().__init__(parent)
@@ -90,7 +94,10 @@ class Shell(QObject):
         self._accounts: list[dict] = []
         self._skin: dict = {}
         self._skin_for = ""
-        self._ms: dict = {"state": "idle"}
+        # available=True по умолчанию: если спросить не удалось, лучше показать кнопку,
+        # чем спрятать рабочий вход из-за сетевой заминки
+        self._ms: dict = {"state": "idle", "available": True}
+        self._nexora: dict = {"state": "idle"}
         self.tracker = TaskTracker(api, self)
         self.tracker.tasks_changed.connect(self._on_tasks)
         self.tracker.task_finished.connect(self._on_task_finished)
@@ -234,7 +241,7 @@ class Shell(QObject):
         def done(items: list[dict]) -> None:
             self._accounts = [{
                 "id": a["id"], "name": a["username"], "active": bool(a.get("active")),
-                "kind": t("q.account_microsoft") if a.get("auth_type") == "microsoft" else t("q.account_offline"),
+                "kind": t(_ACCOUNT_KINDS.get(str(a.get("auth_type", "")), "q.account_offline")),
                 "seed": art.seed_of(a["username"]), "expired": bool(a.get("expired")),
             } for a in items]
             self.accountsChanged.emit()
@@ -286,7 +293,9 @@ class Shell(QObject):
         def done(info: dict) -> None:
             self._skin = info
             self.skinChanged.emit()
-            self.toast(done_text)
+            # У аккаунта Nexora скин уходит на сервер, и это меняет ответ на вопрос «где его видно»
+            self.toast(t("q.skin_set_nexora") if done_text == t("q.skin_set") and info.get("source") == "nexora"
+                       else done_text)
 
         run_async(lambda: call(account_id), done, lambda msg: self.toast(msg, "err"), owner=self)
 
@@ -320,6 +329,17 @@ class Shell(QObject):
         return self._ms
 
     @Slot()
+    def checkMicrosoft(self) -> None:
+        """Узнаёт у backend, собран ли лаунчер со своим приложением Azure."""
+        def done(values: dict) -> None:
+            self._ms = dict(self._ms, available=bool(values.get("ms_available", True)))
+            self.microsoftChanged.emit()
+
+        run_async(self.api.settings, done,
+                  lambda message: logger.debug(f"Доступность входа Microsoft не выяснена: {message}"),
+                  owner=self)
+
+    @Slot()
     def startMicrosoftLogin(self) -> None:
         self._ms = {"state": "starting"}
         self.microsoftChanged.emit()
@@ -340,6 +360,46 @@ class Shell(QObject):
             self.tracker.track({"id": data["task_id"]}, done, failed)
 
         run_async(self.api.microsoft_login_start, started, failed, owner=self)
+
+    # --- Аккаунт Nexora (свой сервер аккаунтов и скинов) ------------------------------------------
+    @Property("QVariantMap", notify=nexoraChanged)
+    def nexora(self) -> dict:
+        """{state: idle | busy | error | done, error} — состояние окна входа."""
+        return self._nexora
+
+    def _nexora_login(self, call, name: str) -> None:
+        self._nexora = {"state": "busy"}
+        self.nexoraChanged.emit()
+
+        def done(_account: dict) -> None:
+            self._nexora = {"state": "done"}
+            self.nexoraChanged.emit()
+            self.refreshAccounts()
+            self.toast(t("q.account_added", name=name))
+
+        def failed(message: str) -> None:
+            # Ошибку показываем прямо в окне входа: закрывать его и прятать текст в тост не нужно
+            self._nexora = {"state": "error", "error": message}
+            self.nexoraChanged.emit()
+
+        run_async(call, done, failed, owner=self)
+
+    @Slot()
+    def resetNexora(self) -> None:
+        """Окно входа открыли заново — убрать прежнюю ошибку."""
+        if self._nexora.get("state") != "idle":
+            self._nexora = {"state": "idle"}
+            self.nexoraChanged.emit()
+
+    @Slot(str, str)
+    def addNexoraAccount(self, login: str, password: str) -> None:
+        login = login.strip()
+        self._nexora_login(lambda: self.api.nexora_login(login, password), login)
+
+    @Slot(str, str, str)
+    def registerNexoraAccount(self, username: str, email: str, password: str) -> None:
+        username, email = username.strip(), email.strip()
+        self._nexora_login(lambda: self.api.nexora_register(username, email, password), username)
 
     @Slot()
     def requestAddAccount(self) -> None:

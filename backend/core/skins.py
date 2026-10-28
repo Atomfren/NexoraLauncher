@@ -3,27 +3,34 @@
 Откуда берётся скин (по порядку):
 
 1. свой файл, выбранный в лаунчере (``<data>/skins/<id аккаунта>/skin.png`` и ``cape.png``);
-2. Microsoft-аккаунт — скин из профиля Minecraft;
-3. офлайн-ник — скин и плащ лицензионного игрока с тем же ником (публичное API Mojang);
-4. Стив или Алекс из установленной версии игры (как выбирает сама игра по UUID).
+2. аккаунт Nexora — скин и плащ с сервера аккаунтов (nexoralauncher.ru);
+3. Microsoft-аккаунт — скин из профиля Minecraft;
+4. офлайн-ник — скин и плащ лицензионного игрока с тем же ником (публичное API Mojang);
+5. Стив или Алекс из установленной версии игры (как выбирает сама игра по UUID).
 
-Свой скин виден только в лаунчере: офлайн-игра без модов скины не загружает.
+У аккаунта Nexora «свой скин» означает загрузку на сервер, а не файл рядом с лаунчером:
+тогда скин виден и на другом компьютере, и — с модом CustomSkinLoader — в самой игре.
+У остальных типов аккаунтов свой скин виден только в лаунчере: офлайн-игра без модов
+скины не загружает.
 """
 
 import base64
 import json
+import re
 import shutil
 import time
 import uuid as uuid_lib
 import zipfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from loguru import logger
 
+from backend.core import nexora_account
 from backend.core.auth import Account, AuthManager
-from backend.core.errors import BadRequestError
+from backend.core.errors import BadRequestError, NexoraError
 from shared.fsutil import atomic_write_json, read_json
 from shared.paths import get_cache_dir, get_data_dir, get_minecraft_dir
 from shared.version import USER_AGENT
@@ -34,6 +41,8 @@ _CACHE_TTL = 24 * 3600
 _MISS_TTL = 6 * 3600  # «такого лицензионного ника нет» — проверим снова позже
 _MAX_PNG = 2 * 1024 * 1024
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+# Имя файла текстуры на сервере Nexora — sha256 содержимого; ничего другого в кэш не кладём
+_TEXTURE_NAME = re.compile(r"^[0-9a-f]{64}\.png$")
 
 
 def _custom_dir(account_id: str) -> Path:
@@ -145,6 +154,31 @@ def _mojang_textures_once(username: str) -> dict[str, Any]:
         return {k: v for k, v in meta.items() if k != "time"} if isinstance(meta, dict) else {}
 
 
+def _nexora_textures(account: Account) -> dict[str, Any]:
+    """Скин и плащ с сервера аккаунтов Nexora.
+
+    Имя файла на сервере — это sha256 его содержимого, поэтому скачиваем каждую текстуру
+    один раз и храним в кэше под тем же именем: поменялся скин — поменялась и ссылка.
+    """
+    result: dict[str, Any] = {"slim": bool(account.skin_slim)}
+    for kind, url in (("skin", account.skin_url), ("cape", account.cape_url)):
+        if not url:
+            continue
+        name = Path(urlparse(url).path).name
+        if not _TEXTURE_NAME.match(name):
+            logger.debug(f"Непонятный адрес текстуры Nexora: {url}")
+            continue
+        dest = _cache_dir() / "nexora" / name
+        if not dest.is_file():
+            try:
+                nexora_account.download(url, dest)
+            except NexoraError as e:
+                logger.debug(f"Текстура Nexora не скачана: {e}")
+                continue
+        result[kind] = str(dest)
+    return result
+
+
 def _microsoft_skin(account: Account) -> dict[str, Any]:
     if not account.skin_url:
         return {}
@@ -169,9 +203,14 @@ def skin_info(account_id: str) -> dict[str, Any]:
     if (custom / "skin.png").is_file():
         info.update(skin=str(custom / "skin.png"), slim=bool(custom_meta.get("slim")), source="custom")
     else:
-        remote = _microsoft_skin(account) if account.auth_type == "microsoft" else _mojang_textures(account.username)
+        if account.auth_type == "nexora":
+            remote, source = _nexora_textures(account), "nexora"
+        elif account.auth_type == "microsoft":
+            remote, source = _microsoft_skin(account), "mojang"
+        else:
+            remote, source = _mojang_textures(account.username), "mojang"
         if remote.get("skin"):
-            info.update(skin=remote["skin"], slim=bool(remote.get("slim")), source="mojang")
+            info.update(skin=remote["skin"], slim=bool(remote.get("slim")), source=source)
             if remote.get("cape"):
                 info["cape"] = remote["cape"]
     if (custom / "cape.png").is_file():
@@ -183,11 +222,25 @@ def skin_info(account_id: str) -> dict[str, Any]:
     return info
 
 
+def _upload_to_nexora(account: Account, upload) -> dict[str, Any]:
+    """Отправляет текстуру на сервер аккаунтов и запоминает новые ссылки.
+
+    Локальную копию при этом не держим: источник правды — сервер, оттуда скин и приедет
+    обратно (сразу в кэш, по новой ссылке).
+    """
+    token = AuthManager.nexora_token(account)
+    AuthManager.nexora_update(account, upload(token))
+    shutil.rmtree(_custom_dir(account.id), ignore_errors=True)
+    return skin_info(account.id)
+
+
 def set_custom_skin(account_id: str, source: Path, slim: bool) -> dict[str, Any]:
     account = AuthManager.get(account_id)
     if not source.is_file():
         raise BadRequestError(f"Файл не найден: {source}")
     _check_png(source.read_bytes())
+    if account.auth_type == "nexora":
+        return _upload_to_nexora(account, lambda token: nexora_account.upload_skin(token, source, slim))
     folder = _custom_dir(account.id)
     folder.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, folder / "skin.png")
@@ -200,6 +253,8 @@ def set_custom_cape(account_id: str, source: Path) -> dict[str, Any]:
     if not source.is_file():
         raise BadRequestError(f"Файл не найден: {source}")
     _check_png(source.read_bytes())
+    if account.auth_type == "nexora":
+        return _upload_to_nexora(account, lambda token: nexora_account.upload_cape(token, source))
     folder = _custom_dir(account.id)
     folder.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, folder / "cape.png")
@@ -207,7 +262,13 @@ def set_custom_cape(account_id: str, source: Path) -> dict[str, Any]:
 
 
 def reset_custom(account_id: str) -> dict[str, Any]:
-    """Убирает свой скин и плащ: снова скин с Mojang или по умолчанию."""
+    """Убирает свой скин и плащ: снова скин с Mojang или по умолчанию.
+
+    У аккаунта Nexora скин лежит на сервере, поэтому там он и удаляется — иначе
+    «сброс» в лаунчере ничего бы не менял: при следующем запуске скин приехал бы снова.
+    """
     account = AuthManager.get(account_id)
+    if account.auth_type == "nexora":
+        return _upload_to_nexora(account, nexora_account.clear_textures)
     shutil.rmtree(_custom_dir(account.id), ignore_errors=True)
     return skin_info(account.id)
