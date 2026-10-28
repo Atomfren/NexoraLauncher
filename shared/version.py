@@ -2,7 +2,7 @@
 
 APP_NAME = "NexoraLauncher"
 APP_ID = "nexoralauncher"
-APP_VERSION = "1.6.1"
+APP_VERSION = "1.7.0"
 # Сайт лаунчера: на него ведёт логотип в углу окна
 WEBSITE_URL = "https://nexoralauncher.ru"
 # Куда писать игроку: эта же почта указана на сайте
