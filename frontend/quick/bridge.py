@@ -167,6 +167,11 @@ class Shell(QObject):
         return WEBSITE_URL
 
     @Property(str, constant=True)
+    def supportEmail(self) -> str:
+        from shared.version import SUPPORT_EMAIL
+        return SUPPORT_EMAIL
+
+    @Property(str, constant=True)
     def version(self) -> str:
         return APP_VERSION
 

@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 from frontend.theme import apply_theme
 from frontend.widgets import AppContext, Page, button, label, open_path, open_url, show_info
 from shared.i18n import t
-from shared.version import APP_NAME, APP_VERSION, WEBSITE_URL
+from shared.version import APP_NAME, APP_VERSION, SUPPORT_EMAIL, WEBSITE_URL
 
 _AZURE_HELP = "https://learn.microsoft.com/entra/identity-platform/quickstart-register-app"
 
@@ -142,6 +142,8 @@ class SettingsPage(Page):
         links.addWidget(button(t("update.check_now"), self._check_updates))
         # Не «GitHub»: код закрыт, ссылка на исходники обещала бы то, чего нет
         links.addWidget(button(t("q.website"), lambda: open_url(WEBSITE_URL), "ghost"))
+        links.addWidget(button(t("q.support"),
+                               lambda: open_url(f"mailto:{SUPPORT_EMAIL}"), "ghost"))
         links.addStretch()
         form.addRow(links)
         self.body.addWidget(about)

@@ -446,6 +446,11 @@ Item {
                     NxButton { small: true; variant: "ghost"; iconName: "external"; text: I18n.t("q.open"); onClicked: Shell.openUrl(Shell.website) }
                 }
                 NxSettingRow {
+                    label: I18n.t("q.support")
+                    hint: Shell.supportEmail
+                    NxButton { small: true; variant: "ghost"; iconName: "external"; text: I18n.t("q.write"); onClicked: Shell.openUrl("mailto:" + Shell.supportEmail) }
+                }
+                NxSettingRow {
                     label: I18n.t("q.launcher_logs")
                     NxButton { small: true; variant: "ghost"; iconName: "folder"; text: I18n.t("q.open_folder"); onClicked: Shell.openPath(Prefs.system.logs_dir) }
                 }
